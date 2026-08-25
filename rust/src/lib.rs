@@ -2,6 +2,9 @@
 
 use std::f32::consts::TAU;
 
+#[cfg(feature = "cef-runtime")]
+mod cef_runtime;
+
 const API_VERSION: u32 = 1;
 const WIDTH: usize = 800;
 const HEIGHT: usize = 450;

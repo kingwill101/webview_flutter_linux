@@ -1,20 +1,37 @@
 // SPDX-License-Identifier: UNLICENSED
 
 import 'dart:async';
+import 'dart:io' show Platform;
 import 'dart:ui' as ui;
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:marionette_flutter/marionette_flutter.dart';
 
 import 'src/native_frame_renderer.dart';
 
 void main() {
-  runApp(const ProbeApp());
+  final isFlutterTest = Platform.environment.containsKey('FLUTTER_TEST');
+  if (kDebugMode && !isFlutterTest) {
+    MarionetteBinding.ensureInitialized();
+  } else {
+    WidgetsFlutterBinding.ensureInitialized();
+  }
+  final renderer = NativeFrameRenderer();
+  runApp(ProbeApp(renderer: renderer));
 }
 
 class ProbeApp extends StatelessWidget {
-  const ProbeApp({super.key, this.animate = true});
+  const ProbeApp({
+    super.key,
+    this.animate = true,
+    this.enableCef = true,
+    this.renderer,
+  });
 
   final bool animate;
+  final bool enableCef;
+  final NativeFrameRenderer? renderer;
 
   @override
   Widget build(BuildContext context) {
@@ -28,21 +45,33 @@ class ProbeApp extends StatelessWidget {
         ),
         useMaterial3: true,
       ),
-      home: ProbePage(animate: animate),
+      home: ProbePage(
+        animate: animate,
+        enableCef: enableCef,
+        renderer: renderer,
+      ),
     );
   }
 }
 
 class ProbePage extends StatefulWidget {
-  const ProbePage({super.key, required this.animate});
+  const ProbePage({
+    super.key,
+    required this.animate,
+    required this.enableCef,
+    this.renderer,
+  });
 
   final bool animate;
+  final bool enableCef;
+  final NativeFrameRenderer? renderer;
 
   @override
   State<ProbePage> createState() => _ProbePageState();
 }
 
 class _ProbePageState extends State<ProbePage> {
+  final _addressController = TextEditingController(text: 'https://example.com');
   NativeFrameRenderer? _renderer;
   Timer? _frameTimer;
   ui.Image? _image;
@@ -55,14 +84,18 @@ class _ProbePageState extends State<ProbePage> {
   void initState() {
     super.initState();
     try {
-      _renderer = NativeFrameRenderer();
-      _renderNextFrame();
-      if (widget.animate) {
-        _frameTimer = Timer.periodic(
-          const Duration(milliseconds: 33),
-          (_) => _renderNextFrame(),
-        );
-      }
+      _renderer =
+          widget.renderer ?? NativeFrameRenderer(enableCef: widget.enableCef);
+      Timer.run(() {
+        if (!mounted) return;
+        _renderNextFrame();
+        if (widget.animate) {
+          _frameTimer = Timer.periodic(
+            const Duration(milliseconds: 33),
+            (_) => _renderNextFrame(),
+          );
+        }
+      });
     } catch (error) {
       _error = error;
     }
@@ -75,6 +108,7 @@ class _ProbePageState extends State<ProbePage> {
     _frameInFlight = true;
     try {
       final nextImage = await renderer.render(_frameNumber++);
+      if (nextImage == null) return;
       if (!mounted) {
         nextImage.dispose();
         return;
@@ -102,6 +136,7 @@ class _ProbePageState extends State<ProbePage> {
   @override
   void dispose() {
     _frameTimer?.cancel();
+    _addressController.dispose();
     _image?.dispose();
     _renderer?.dispose();
     super.dispose();
@@ -137,6 +172,13 @@ class _ProbePageState extends State<ProbePage> {
                     icon: Icons.aspect_ratio,
                     label: '${renderer.width}×${renderer.height} RGBA',
                   ),
+                if (renderer?.cefEnabled ?? false)
+                  _StatusChip(
+                    icon: Icons.language,
+                    label: renderer!.cefFrameReady
+                        ? 'CEF CPU OSR · frame ${renderer.cefFrameGeneration}'
+                        : 'CEF CPU OSR · waiting for first paint',
+                  ),
                 _StatusChip(
                   icon: Icons.movie_filter_outlined,
                   label: 'Frames: $_framesRendered',
@@ -144,6 +186,30 @@ class _ProbePageState extends State<ProbePage> {
               ],
             ),
             const SizedBox(height: 18),
+            Row(
+              children: [
+                Expanded(
+                  child: TextField(
+                    key: const ValueKey('address-field'),
+                    controller: _addressController,
+                    decoration: const InputDecoration(
+                      labelText: 'URL',
+                      border: OutlineInputBorder(),
+                      isDense: true,
+                    ),
+                    onSubmitted: (_) => _navigate(),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                FilledButton.icon(
+                  key: const ValueKey('navigate-button'),
+                  onPressed: renderer?.cefEnabled ?? false ? _navigate : null,
+                  icon: const Icon(Icons.arrow_forward),
+                  label: const Text('Go'),
+                ),
+              ],
+            ),
+            const SizedBox(height: 14),
             Expanded(
               child: DecoratedBox(
                 decoration: BoxDecoration(
@@ -168,8 +234,8 @@ class _ProbePageState extends State<ProbePage> {
             Text(
               'This frame is generated in Rust, written directly into '
               'FFI memory owned by Dart, and uploaded as a Flutter image. '
-              'CEF will replace the procedural renderer after this boundary '
-              'is proven stable.',
+              'The procedural frame remains visible only until CEF delivers '
+              'its first off-screen paint callback.',
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
               ),
@@ -178,6 +244,19 @@ class _ProbePageState extends State<ProbePage> {
         ),
       ),
     );
+  }
+
+  void _navigate() {
+    final renderer = _renderer;
+    if (renderer == null) return;
+    var url = _addressController.text.trim();
+    if (url.isEmpty) return;
+    if (!url.contains('://')) url = 'https://$url';
+    _addressController.value = TextEditingValue(
+      text: url,
+      selection: TextSelection.collapsed(offset: url.length),
+    );
+    renderer.navigate(url);
   }
 
   Widget _buildSurface() {

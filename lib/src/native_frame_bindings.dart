@@ -22,3 +22,30 @@ external int zikzakRenderTestFrame(
   int destinationLength,
   int frameNumber,
 );
+
+@ffi.Native<ffi.Int32 Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>)>(
+  symbol: 'zikzak_cef_initialize',
+)
+external int zikzakCefInitialize(
+  ffi.Pointer<ffi.Char> runtimeDirectory,
+  ffi.Pointer<ffi.Char> initialUrl,
+);
+
+@ffi.Native<ffi.Int32 Function()>(symbol: 'zikzak_cef_pump')
+external int zikzakCefPump();
+
+@ffi.Native<ffi.Uint64 Function()>(symbol: 'zikzak_cef_frame_generation')
+external int zikzakCefFrameGeneration();
+
+@ffi.Native<ffi.Int32 Function(ffi.Pointer<ffi.Uint8>, ffi.Size)>(
+  symbol: 'zikzak_cef_copy_latest_frame',
+)
+external int zikzakCefCopyLatestFrame(
+  ffi.Pointer<ffi.Uint8> destination,
+  int destinationLength,
+);
+
+@ffi.Native<ffi.Int32 Function(ffi.Pointer<ffi.Char>)>(
+  symbol: 'zikzak_cef_navigate',
+)
+external int zikzakCefNavigate(ffi.Pointer<ffi.Char> url);

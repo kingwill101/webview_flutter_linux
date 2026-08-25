@@ -18,6 +18,15 @@ int32_t zikzak_render_test_frame(
     uint8_t* destination,
     size_t destination_length,
     uint64_t frame_number);
+int32_t zikzak_cef_initialize(
+    const char* runtime_directory,
+    const char* initial_url);
+int32_t zikzak_cef_pump(void);
+uint64_t zikzak_cef_frame_generation(void);
+int32_t zikzak_cef_copy_latest_frame(
+    uint8_t* destination,
+    size_t destination_length);
+int32_t zikzak_cef_navigate(const char* url);
 
 #ifdef __cplusplus
 }

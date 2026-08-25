@@ -6,7 +6,8 @@ import 'package:zikzak_inappwebview_latest_probe/main.dart';
 
 void main() {
   testWidgets('Rust native frame reaches the Flutter surface', (tester) async {
-    await tester.pumpWidget(const ProbeApp(animate: false));
+    await tester.pumpWidget(const ProbeApp(animate: false, enableCef: false));
+    await tester.pump(const Duration(milliseconds: 1));
     await tester.runAsync(
       () => Future<void>.delayed(const Duration(milliseconds: 250)),
     );

@@ -57,6 +57,39 @@ pkg_check_modules(GTK REQUIRED IMPORTED_TARGET gtk+-3.0)
 # Application build; see runner/CMakeLists.txt.
 add_subdirectory("runner")
 
+# CEF is a runtime distribution, not a single linkable library. Build its
+# dedicated subprocess helper with Cargo and install the helper plus Chromium
+# runtime files beside the Rust native asset in the Flutter bundle.
+set(CEF_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/cef")
+set(RUST_CRATE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../rust")
+set(CEF_CARGO_RUNTIME_DIR "${RUST_CRATE_DIR}/target/release")
+set(CEF_HELPER "${CEF_CARGO_RUNTIME_DIR}/zikzak_cef_helper")
+
+if(NOT EXISTS "${CEF_SOURCE_DIR}/archive.json")
+  message(FATAL_ERROR
+    "CEF is not installed at ${CEF_SOURCE_DIR}. See README.md for setup.")
+endif()
+
+find_program(RUSTUP_EXECUTABLE rustup REQUIRED)
+add_custom_command(
+  OUTPUT "${CEF_HELPER}"
+  COMMAND "${CMAKE_COMMAND}" -E env "CEF_PATH=${CEF_SOURCE_DIR}"
+    "${RUSTUP_EXECUTABLE}" run 1.95.0 cargo build
+    --manifest-path "${RUST_CRATE_DIR}/Cargo.toml"
+    --release
+    --features cef-runtime
+    --bin zikzak_cef_helper
+  DEPENDS
+    "${RUST_CRATE_DIR}/Cargo.toml"
+    "${RUST_CRATE_DIR}/Cargo.lock"
+    "${RUST_CRATE_DIR}/src/bin/zikzak_cef_helper.rs"
+  WORKING_DIRECTORY "${RUST_CRATE_DIR}"
+  COMMENT "Building the CEF subprocess helper"
+  VERBATIM
+)
+add_custom_target(zikzak_cef_helper ALL DEPENDS "${CEF_HELPER}")
+add_dependencies(${BINARY_NAME} zikzak_cef_helper)
+
 # Run the Flutter tool portions of the build. This must not be removed.
 add_dependencies(${BINARY_NAME} flutter_assemble)
 
@@ -111,6 +144,32 @@ set(NATIVE_ASSETS_DIR "${PROJECT_BUILD_DIR}native_assets/linux/")
 install(DIRECTORY "${NATIVE_ASSETS_DIR}"
    DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
    COMPONENT Runtime)
+
+install(PROGRAMS "${CEF_HELPER}"
+  DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
+  COMPONENT Runtime)
+
+set(CEF_RUNTIME_FILES
+  chrome_100_percent.pak
+  chrome_200_percent.pak
+  icudtl.dat
+  libEGL.so
+  libGLESv2.so
+  libcef.so
+  libvk_swiftshader.so
+  libvulkan.so.1
+  resources.pak
+  v8_context_snapshot.bin
+  vk_swiftshader_icd.json
+)
+foreach(cef_runtime_file ${CEF_RUNTIME_FILES})
+  install(FILES "${CEF_CARGO_RUNTIME_DIR}/${cef_runtime_file}"
+    DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
+    COMPONENT Runtime)
+endforeach()
+install(DIRECTORY "${CEF_CARGO_RUNTIME_DIR}/locales/"
+  DESTINATION "${INSTALL_BUNDLE_LIB_DIR}/locales"
+  COMPONENT Runtime)
 
 # Fully re-copy the assets directory on each build to avoid having stale files
 # from a previous install.

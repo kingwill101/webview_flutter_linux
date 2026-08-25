@@ -33,6 +33,7 @@ migrate_working_dir/
 /build/
 /coverage/
 /rust/target/
+/third_party/cef/
 
 # Symbolication related
 app.*.symbols

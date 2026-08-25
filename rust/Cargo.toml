@@ -1,0 +1,14 @@
+[package]
+name = "zikzak-browser-native"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+name = "zikzak_browser_native"
+crate-type = ["staticlib", "cdylib"]
+
+[profile.release]
+lto = "thin"
+panic = "abort"
+strip = "symbols"

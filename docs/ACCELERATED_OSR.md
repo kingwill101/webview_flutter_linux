@@ -24,30 +24,30 @@ CEF GPU process
     v
 Rust CEF callback
     |
-    | synchronous C ABI callback (borrowed descriptors)
+    | synchronous call with borrowed descriptors
     v
-narrow Linux runner C shim
+Rust texture provider
     |
     | EGL_EXT_image_dma_buf_import_modifiers
     | shared EGL context + GPU blit before callback returns
     v
-application-owned GL_RGBA8 FlTextureGL
+Irondash application-owned GL_RGBA8 FlTextureGL
     |
     v
 Flutter Texture widget
 ```
 
-The stock Flutter runner contains a narrow C-only registration and EGL interop
-shim. It registers `FlTextureGL`, creates a context shared with Flutter, and
-performs the synchronous import/blit requested by Rust through the C ABI. It is
-not a GTK browser implementation and contains no C++ browser layer. Browser
-creation, browser behavior, CEF callbacks, and the callback ownership decision
-remain in Rust.
+The stock Flutter runner is unmodified. Dart obtains the engine handle through
+`irondash_engine_context`, passes it through FFI, and Rust uses
+`irondash_texture` to register `FlTextureGL`. Rust also creates the context
+shared with Flutter and performs the synchronous import/blit. Browser creation,
+browser behavior, CEF callbacks, texture ownership, and the callback lifetime
+decision all remain in Rust.
 
 ## Implementation phases and gates
 
 1. **Capability probe — implemented and verified on the development host**
-   - Select the opt-in ABI v5 transport with
+   - Select the opt-in ABI v6 transport with
      `ZIKZAK_CEF_ACCELERATED_PROBE=1`.
    - Enable `shared_texture_enabled`, GPU compositing, `--use-angle=gl-egl`,
      and an explicitly selected Ozone platform.
@@ -62,8 +62,8 @@ remain in Rust.
      never retains an fd.
 
 2. **Flutter texture registration seam — implemented and visually verified**
-   - Register `FlTextureGL` in the Linux runner and attach it to Rust through a
-     narrow C ABI callback.
+   - Pass the engine handle from Dart through FFI and register `FlTextureGL`
+     from Rust through Irondash.
    - Allocate the destination GL texture at the surface's physical dimensions
      and expose its texture ID, GL name, and import status to Dart.
    - Evidence: the Rust-generated one-pixel grid and diagonal rendered sharply
@@ -90,14 +90,13 @@ remain in Rust.
      filtered or stale-size browser frame.
    - Keep CPU OSR selectable as a diagnostic fallback, not as an implicit copy
      inside the accelerated path.
-   - Close the browser during runner shutdown, pump until `on_before_close`,
-     then release the runtime and unload the native library.
-   - Evidence: the animated local smoke page advanced 189 paints in a
-     three-second sample, all valid; the GL name rotated through the texture
-     ring; 918×634, 1240×449, and 960×303 surfaces all reported 1:1; copy time
-     peaked at 10.442 ms during the observed run with zero fence fallbacks;
-     click and direct keyboard input updated the page; normal window close left
-     no application or CEF helper processes.
+   - Close the browser from Dart lifecycle shutdown, pump until
+     `on_before_close`, then release the Irondash texture.
+   - Evidence after the Irondash migration: the animated local smoke page
+     reached 190/190 valid paints; the GL name rotated through the texture ring;
+     1878×700 and 1240×369 surfaces reported 1:1; copy time peaked at 14.688 ms
+     with zero fence fallbacks; click and direct keyboard input updated the
+     page; normal window close left no application or CEF helper processes.
    - Gate remaining: DPR changes, hidden/minimized windows, rapid resize loops,
      and repeated lifecycle transitions pass the same smoke flow on both
      transports.

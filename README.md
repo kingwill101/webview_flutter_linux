@@ -12,22 +12,26 @@ GTK/C++ browser bridge.
 builds the Rust `cdylib` through Dart's native-assets hook. The browser layer is
 [`tauri-apps/cef-rs`](https://github.com/tauri-apps/cef-rs), pinned to commit
 `a2e15ae659c4b3957883e34de879bd8b38360ce5` (CEF 151.8.0 / Chromium 151).
+[`irondash_engine_context`](https://pub.dev/packages/irondash_engine_context)
+passes the Flutter engine handle to FFI, and
+[`irondash_texture`](https://crates.io/crates/irondash_texture) implements the
+Linux `FlTextureGL` registration and GObject subclass in Rust.
 
 ```text
 CEF GPU process
         |
 OnAcceleratedPaint (callback-scoped DMA-BUF)
         |
-        | synchronous Rust -> C FFI callback
+        | synchronous Rust call
         v
-EGL import + GPU blit into a three-slot application-owned GL ring
+Rust EGL import + GPU blit into a three-slot application-owned GL ring
         |
         | publish only after fence completion
         v
-Flutter Linux FlTextureGL -> Texture widget
+Irondash FlTextureGL -> Flutter Texture widget
 ```
 
-The accelerated transport is ABI v5 and remains opt-in while the experiment is
+The accelerated transport is ABI v6 and remains opt-in while the experiment is
 being hardened. It enables CEF shared textures, imports every callback-scoped
 DMA-BUF through EGL, and GPU-copies it before returning to CEF. The texture size
 must exactly equal CEF's visible physical-pixel size; a mismatch is rejected
@@ -42,6 +46,11 @@ Flutter's active frame phase, and forwards pointer move, click, wheel, focus,
 and direct keyboard events through the C ABI in CEF view coordinates.
 `marionette_flutter` is enabled only in ordinary debug runs; tests and release
 builds retain the standard Flutter binding.
+
+There is no handwritten C or C++ texture bridge in this repository. The stock
+Flutter Linux runner remains generated C++/GTK code, and the Dart engine-context
+dependency supplies its normal registrar plugin; neither contains browser or
+frame-transport behavior authored by this experiment.
 
 ## One-time CEF setup
 
@@ -115,20 +124,20 @@ its sandbox disabled for this experiment.
 
 The Linux accelerated path has received valid, resize-aware, single-plane
 BGRA8888 DMA-BUF descriptions and registered an application-owned
-`FlTextureGL`. A narrow C runner shim creates an EGL context shared with
-Flutter, and Rust invokes its FFI copy callback synchronously from
-`OnAcceleratedPaint`. The imported EGL image is destroyed before CEF's callback
-returns; only the application-owned texture ring survives. Normal application
-shutdown closes the browser, pumps until CEF reports `on_before_close`, and then
-unloads the native runtime.
+`FlTextureGL`. Rust creates the EGL context shared with Flutter and performs the
+copy synchronously inside `OnAcceleratedPaint`. The imported EGL image is
+destroyed before CEF's callback returns; only the application-owned texture
+ring survives. Dart's detached/dispose lifecycle closes the browser, pumps until
+CEF reports `on_before_close`, and then releases the Irondash texture.
 
-On the current Intel/Mesa Wayland development host, the animated local smoke
-page sustained about 63 valid paints per second over a three-second sample,
-preserved exact 1:1 output through 918×634, 1240×449, and 960×303 surfaces,
-rotated all three GL slots, and recorded zero fence fallbacks. A one-pixel CSS
+On the current Intel/Mesa Wayland development host, the Irondash migration
+reached 190/190 valid accelerated paints, preserved exact 1:1 output at
+1878×700 and after a live resize to 1240×369, rotated the GL ring, and recorded
+zero fence fallbacks. The longest observed copy was 14.688 ms. A one-pixel CSS
 grid line remained one physical pixel, and click plus direct keyboard input
-updated the page. These are host-specific experiment results, not cross-driver
-or 4K proof. The remaining transport work includes 1080p/4K profiling,
+updated the page. Graceful window close left no application or CEF helper
+processes. These are host-specific experiment results, not cross-driver or 4K
+proof. The remaining transport work includes 1080p/4K profiling,
 multi-plane formats, GPU/renderer crash recovery, hidden-window behavior, and
 repeated lifecycle cycles. See the ownership and verification contract in
 [`docs/ACCELERATED_OSR.md`](docs/ACCELERATED_OSR.md).

@@ -8,19 +8,21 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:irondash_engine_context/irondash_engine_context.dart';
 import 'package:marionette_flutter/marionette_flutter.dart';
 
 import 'src/cef_keyboard.dart';
 import 'src/native_frame_renderer.dart';
 
-void main() {
+Future<void> main() async {
   final isFlutterTest = Platform.environment.containsKey('FLUTTER_TEST');
   if (kDebugMode && !isFlutterTest) {
     MarionetteBinding.ensureInitialized();
   } else {
     WidgetsFlutterBinding.ensureInitialized();
   }
-  final renderer = NativeFrameRenderer();
+  final engineHandle = await EngineContext.instance.getEngineHandle();
+  final renderer = NativeFrameRenderer(engineHandle: engineHandle);
   runApp(ProbeApp(renderer: renderer));
 }
 
@@ -159,6 +161,12 @@ class _ProbePageState extends State<ProbePage> with WidgetsBindingObserver {
 
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.detached) {
+      _renderer?.dispose();
+      _renderer = null;
+      _stopFrameTimer();
+      return;
+    }
     final visible =
         state == AppLifecycleState.resumed ||
         state == AppLifecycleState.inactive;
@@ -237,7 +245,7 @@ class _ProbePageState extends State<ProbePage> with WidgetsBindingObserver {
                   _StatusChip(
                     icon: Icons.texture,
                     label:
-                        'FlTextureGL · id ${renderer.textureId} · '
+                        'Irondash FlTextureGL · id ${renderer.textureId} · '
                         'name ${renderer.textureGlName} · '
                         '${_textureTransportLabel(renderer)}',
                   ),
@@ -297,7 +305,7 @@ class _ProbePageState extends State<ProbePage> with WidgetsBindingObserver {
             const SizedBox(height: 14),
             Text(
               renderer?.acceleratedProbe ?? false
-                  ? 'Accelerated probe mode displays an application-owned '
+                  ? 'Accelerated probe mode displays an Irondash-managed '
                         'FlTextureGL surface. Valid CEF DMA-BUF frames are '
                         'imported through EGL and copied into the Flutter-owned '
                         'texture without a CPU pixel readback.'

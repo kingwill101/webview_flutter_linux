@@ -14,6 +14,14 @@ external int zikzakFrameHeight();
 @ffi.Native<ffi.Size Function()>(symbol: 'zikzak_frame_byte_length')
 external int zikzakFrameByteLength();
 
+@ffi.Native<ffi.Int32 Function(ffi.Int64)>(
+  symbol: 'zikzak_flutter_texture_initialize',
+)
+external int zikzakFlutterTextureInitialize(int engineHandle);
+
+@ffi.Native<ffi.Int32 Function()>(symbol: 'zikzak_native_shutdown')
+external int zikzakNativeShutdown();
+
 @ffi.Native<ffi.Int64 Function()>(symbol: 'zikzak_flutter_texture_id')
 external int zikzakFlutterTextureId();
 

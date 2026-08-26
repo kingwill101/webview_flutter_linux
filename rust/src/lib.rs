@@ -2,45 +2,34 @@
 
 use std::{
     f32::consts::TAU,
-    ffi::c_void,
-    sync::{
-        Mutex,
-        atomic::{AtomicI64, AtomicU32, AtomicU64, AtomicUsize, Ordering},
-    },
+    sync::atomic::{AtomicI64, AtomicU32, AtomicU64, AtomicUsize, Ordering},
 };
 
 #[cfg(feature = "cef-runtime")]
 mod cef_runtime;
+#[cfg(target_os = "linux")]
+mod linux_texture;
 
-const API_VERSION: u32 = 5;
+const API_VERSION: u32 = 6;
 const WIDTH: usize = 800;
 const HEIGHT: usize = 450;
 const BYTES_PER_PIXEL: usize = 4;
 const FRAME_BYTE_LENGTH: usize = WIDTH * HEIGHT * BYTES_PER_PIXEL;
 const MAX_DYNAMIC_FRAME_BYTE_LENGTH: usize = 512 * 1024 * 1024;
 
-type FlutterTextureFrameCallback = unsafe extern "C" fn(*mut c_void);
-
-#[derive(Clone, Copy)]
-struct FlutterTextureNotifier {
-    callback: FlutterTextureFrameCallback,
-    user_data: usize,
-}
-
-static FLUTTER_TEXTURE_ID: AtomicI64 = AtomicI64::new(0);
-static FLUTTER_TEXTURE_WIDTH: AtomicU32 = AtomicU32::new(WIDTH as u32);
-static FLUTTER_TEXTURE_HEIGHT: AtomicU32 = AtomicU32::new(HEIGHT as u32);
-static FLUTTER_TEXTURE_GENERATION: AtomicU64 = AtomicU64::new(1);
-static FLUTTER_TEXTURE_GL_NAME: AtomicU32 = AtomicU32::new(0);
-static FLUTTER_TEXTURE_EGL_DISPLAY: AtomicUsize = AtomicUsize::new(0);
-static FLUTTER_TEXTURE_EGL_CONTEXT: AtomicUsize = AtomicUsize::new(0);
-static FLUTTER_TEXTURE_DMA_BUF_GENERATION: AtomicU64 = AtomicU64::new(0);
-static FLUTTER_TEXTURE_DMA_BUF_STATUS: AtomicI64 = AtomicI64::new(0);
-static FLUTTER_TEXTURE_DMA_BUF_COPY_COUNT: AtomicU64 = AtomicU64::new(0);
-static FLUTTER_TEXTURE_DMA_BUF_LAST_COPY_MICROS: AtomicU64 = AtomicU64::new(0);
-static FLUTTER_TEXTURE_DMA_BUF_MAX_COPY_MICROS: AtomicU64 = AtomicU64::new(0);
-static FLUTTER_TEXTURE_DMA_BUF_FENCE_FALLBACK_COUNT: AtomicU64 = AtomicU64::new(0);
-static FLUTTER_TEXTURE_NOTIFIER: Mutex<Option<FlutterTextureNotifier>> = Mutex::new(None);
+pub(crate) static FLUTTER_TEXTURE_ID: AtomicI64 = AtomicI64::new(0);
+pub(crate) static FLUTTER_TEXTURE_WIDTH: AtomicU32 = AtomicU32::new(WIDTH as u32);
+pub(crate) static FLUTTER_TEXTURE_HEIGHT: AtomicU32 = AtomicU32::new(HEIGHT as u32);
+pub(crate) static FLUTTER_TEXTURE_GENERATION: AtomicU64 = AtomicU64::new(1);
+pub(crate) static FLUTTER_TEXTURE_GL_NAME: AtomicU32 = AtomicU32::new(0);
+pub(crate) static FLUTTER_TEXTURE_EGL_DISPLAY: AtomicUsize = AtomicUsize::new(0);
+pub(crate) static FLUTTER_TEXTURE_EGL_CONTEXT: AtomicUsize = AtomicUsize::new(0);
+pub(crate) static FLUTTER_TEXTURE_DMA_BUF_GENERATION: AtomicU64 = AtomicU64::new(0);
+pub(crate) static FLUTTER_TEXTURE_DMA_BUF_STATUS: AtomicI64 = AtomicI64::new(0);
+pub(crate) static FLUTTER_TEXTURE_DMA_BUF_COPY_COUNT: AtomicU64 = AtomicU64::new(0);
+pub(crate) static FLUTTER_TEXTURE_DMA_BUF_LAST_COPY_MICROS: AtomicU64 = AtomicU64::new(0);
+pub(crate) static FLUTTER_TEXTURE_DMA_BUF_MAX_COPY_MICROS: AtomicU64 = AtomicU64::new(0);
+pub(crate) static FLUTTER_TEXTURE_DMA_BUF_FENCE_FALLBACK_COUNT: AtomicU64 = AtomicU64::new(0);
 
 #[unsafe(no_mangle)]
 pub extern "C" fn zikzak_api_version() -> u32 {
@@ -63,46 +52,35 @@ pub extern "C" fn zikzak_frame_byte_length() -> usize {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zikzak_flutter_texture_attach(
-    texture_id: i64,
-    callback: Option<FlutterTextureFrameCallback>,
-    user_data: *mut c_void,
-) -> i32 {
-    let Some(callback) = callback else {
-        return -1;
-    };
-    if texture_id <= 0 || user_data.is_null() {
-        return -1;
+pub extern "C" fn zikzak_flutter_texture_initialize(engine_handle: i64) -> i32 {
+    #[cfg(target_os = "linux")]
+    {
+        linux_texture::initialize(engine_handle)
     }
-    let Ok(mut notifier) = FLUTTER_TEXTURE_NOTIFIER.lock() else {
-        return -2;
-    };
-    *notifier = Some(FlutterTextureNotifier {
-        callback,
-        user_data: user_data as usize,
-    });
-    FLUTTER_TEXTURE_ID.store(texture_id, Ordering::Release);
-    0
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = engine_handle;
+        -20
+    }
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zikzak_flutter_texture_detach(texture_id: i64) {
-    if FLUTTER_TEXTURE_ID.load(Ordering::Acquire) != texture_id {
-        return;
+pub extern "C" fn zikzak_native_shutdown() -> i32 {
+    #[cfg(feature = "cef-runtime")]
+    let cef_status = cef_runtime::zikzak_cef_shutdown();
+    #[cfg(not(feature = "cef-runtime"))]
+    let cef_status = 1;
+
+    #[cfg(target_os = "linux")]
+    let texture_status = linux_texture::shutdown();
+    #[cfg(not(target_os = "linux"))]
+    let texture_status = 0;
+
+    if cef_status < 0 {
+        cef_status
+    } else {
+        texture_status
     }
-    if let Ok(mut notifier) = FLUTTER_TEXTURE_NOTIFIER.lock() {
-        *notifier = None;
-    }
-    FLUTTER_TEXTURE_ID.store(0, Ordering::Release);
-    FLUTTER_TEXTURE_GL_NAME.store(0, Ordering::Release);
-    FLUTTER_TEXTURE_EGL_DISPLAY.store(0, Ordering::Release);
-    FLUTTER_TEXTURE_EGL_CONTEXT.store(0, Ordering::Release);
-    FLUTTER_TEXTURE_DMA_BUF_GENERATION.store(0, Ordering::Release);
-    FLUTTER_TEXTURE_DMA_BUF_STATUS.store(0, Ordering::Release);
-    FLUTTER_TEXTURE_DMA_BUF_COPY_COUNT.store(0, Ordering::Release);
-    FLUTTER_TEXTURE_DMA_BUF_LAST_COPY_MICROS.store(0, Ordering::Release);
-    FLUTTER_TEXTURE_DMA_BUF_MAX_COPY_MICROS.store(0, Ordering::Release);
-    FLUTTER_TEXTURE_DMA_BUF_FENCE_FALLBACK_COUNT.store(0, Ordering::Release);
 }
 
 #[unsafe(no_mangle)]
@@ -140,40 +118,19 @@ pub extern "C" fn zikzak_flutter_texture_generation() -> u64 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn zikzak_flutter_texture_request_frame() -> i32 {
-    notify_flutter_texture_frame()
+    #[cfg(target_os = "linux")]
+    {
+        linux_texture::mark_frame_available()
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        -20
+    }
 }
 
+#[cfg(feature = "cef-runtime")]
 pub(crate) fn notify_flutter_texture_frame() -> i32 {
-    let notifier = match FLUTTER_TEXTURE_NOTIFIER.lock() {
-        Ok(notifier) => *notifier,
-        Err(_) => return -2,
-    };
-    let Some(notifier) = notifier else {
-        return -1;
-    };
-    // SAFETY: The runner owns user_data and detaches the callback before
-    // releasing it. Calls currently originate on Flutter's platform thread.
-    unsafe { (notifier.callback)(notifier.user_data as *mut c_void) };
-    0
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn zikzak_flutter_texture_publish_dma_buf_result(
-    generation: u64,
-    status: i32,
-    copy_micros: u64,
-    fence_fallback: i32,
-) {
-    FLUTTER_TEXTURE_DMA_BUF_GENERATION.store(generation, Ordering::Release);
-    FLUTTER_TEXTURE_DMA_BUF_STATUS.store(i64::from(status), Ordering::Release);
-    FLUTTER_TEXTURE_DMA_BUF_LAST_COPY_MICROS.store(copy_micros, Ordering::Release);
-    FLUTTER_TEXTURE_DMA_BUF_MAX_COPY_MICROS.fetch_max(copy_micros, Ordering::AcqRel);
-    if status == 0 {
-        FLUTTER_TEXTURE_DMA_BUF_COPY_COUNT.fetch_add(1, Ordering::AcqRel);
-    }
-    if fence_fallback != 0 {
-        FLUTTER_TEXTURE_DMA_BUF_FENCE_FALLBACK_COUNT.fetch_add(1, Ordering::AcqRel);
-    }
+    zikzak_flutter_texture_request_frame()
 }
 
 #[unsafe(no_mangle)]
@@ -204,27 +161,6 @@ pub extern "C" fn zikzak_flutter_texture_dma_buf_max_copy_micros() -> u64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn zikzak_flutter_texture_dma_buf_fence_fallback_count() -> u64 {
     FLUTTER_TEXTURE_DMA_BUF_FENCE_FALLBACK_COUNT.load(Ordering::Acquire)
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn zikzak_flutter_texture_publish_gl_state(
-    name: u32,
-    width: u32,
-    height: u32,
-    egl_display: usize,
-    egl_context: usize,
-) -> i32 {
-    if name == 0
-        || egl_display == 0
-        || egl_context == 0
-        || checked_dynamic_frame_byte_length(width, height).is_none()
-    {
-        return -1;
-    }
-    FLUTTER_TEXTURE_GL_NAME.store(name, Ordering::Release);
-    FLUTTER_TEXTURE_EGL_DISPLAY.store(egl_display, Ordering::Release);
-    FLUTTER_TEXTURE_EGL_CONTEXT.store(egl_context, Ordering::Release);
-    0
 }
 
 #[unsafe(no_mangle)]

@@ -17,6 +17,7 @@ cef-accelerated = ["cef-runtime", "cef/accelerated_osr"]
 
 [dependencies]
 cef = { git = "https://github.com/tauri-apps/cef-rs", rev = "a2e15ae659c4b3957883e34de879bd8b38360ce5", default-features = false, features = ["resources"], optional = true }
+irondash_texture = "0.5.0"
 
 [[bin]]
 name = "zikzak_cef_helper"

@@ -12,6 +12,7 @@ import 'native_frame_bindings.dart';
 
 final class NativeFrameRenderer {
   NativeFrameRenderer({
+    int? engineHandle,
     bool enableCef = true,
     String initialUrl = 'https://example.com',
     bool? acceleratedProbe,
@@ -31,17 +32,39 @@ final class NativeFrameRenderer {
     }
     _allocateBuffer(_byteLength);
 
-    if (enableCef) {
-      final executableDirectory = File(Platform.resolvedExecutable).parent;
-      final runtimeDirectory = Directory(
-        '${executableDirectory.path}${Platform.pathSeparator}lib',
-      );
-      final reusedRuntime = _initializeCef(runtimeDirectory.path, initialUrl);
-      cefEnabled = true;
-      setVisibility(true);
-      if (reusedRuntime) {
-        navigate(initialUrl);
+    try {
+      if (this.acceleratedProbe) {
+        if (engineHandle == null) {
+          throw ArgumentError.notNull('engineHandle');
+        }
+        final textureStatus = zikzakFlutterTextureInitialize(engineHandle);
+        if (textureStatus != 0 && textureStatus != 1) {
+          throw StateError(
+            'Irondash Flutter texture initialization failed with status '
+            '$textureStatus.',
+          );
+        }
       }
+
+      if (enableCef) {
+        final executableDirectory = File(Platform.resolvedExecutable).parent;
+        final runtimeDirectory = Directory(
+          '${executableDirectory.path}${Platform.pathSeparator}lib',
+        );
+        final reusedRuntime = _initializeCef(runtimeDirectory.path, initialUrl);
+        cefEnabled = true;
+        setVisibility(true);
+        if (reusedRuntime) {
+          navigate(initialUrl);
+        }
+      }
+    } catch (_) {
+      if (enableCef || this.acceleratedProbe) {
+        zikzakNativeShutdown();
+      }
+      calloc.free(_destination);
+      _disposed = true;
+      rethrow;
     }
   }
 
@@ -352,6 +375,15 @@ final class NativeFrameRenderer {
   void dispose() {
     if (_disposed) return;
     _disposed = true;
+    if (cefEnabled || acceleratedProbe) {
+      final shutdownStatus = zikzakNativeShutdown();
+      if (shutdownStatus < 0) {
+        stderr.writeln(
+          'Native browser shutdown failed with status $shutdownStatus.',
+        );
+      }
+      cefEnabled = false;
+    }
     calloc.free(_destination);
   }
 }

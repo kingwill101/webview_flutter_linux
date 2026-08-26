@@ -7,7 +7,7 @@ use cef::{
 };
 use std::{
     cell::RefCell,
-    ffi::{CStr, c_char, c_void},
+    ffi::{CStr, c_char},
     path::PathBuf,
     sync::{
         Arc, Mutex,
@@ -42,35 +42,7 @@ struct AcceleratedPaintSnapshot {
     first_plane_stride: u32,
 }
 
-#[repr(C)]
-pub struct ZikzakDmaBufFrame {
-    pub generation: u64,
-    pub plane_count: u32,
-    pub fds: [i32; 4],
-    pub strides: [u32; 4],
-    pub offsets: [u64; 4],
-    pub sizes: [u64; 4],
-    pub modifier: u64,
-    pub format: u32,
-    pub coded_width: i32,
-    pub coded_height: i32,
-    pub visible_x: i32,
-    pub visible_y: i32,
-    pub visible_width: i32,
-    pub visible_height: i32,
-}
-
 static DMA_BUF_GENERATION: AtomicU64 = AtomicU64::new(0);
-
-type DmaBufCopyCallback = unsafe extern "C" fn(*const ZikzakDmaBufFrame, *mut c_void) -> i32;
-
-#[derive(Clone, Copy)]
-struct DmaBufCopyTarget {
-    callback: DmaBufCopyCallback,
-    user_data: usize,
-}
-
-static DMA_BUF_COPY_TARGET: Mutex<Option<DmaBufCopyTarget>> = Mutex::new(None);
 
 #[derive(Clone, Copy)]
 struct SurfaceMetrics {
@@ -246,21 +218,13 @@ fn accelerated_paint_info_is_valid(info: &AcceleratedPaintInfo) -> bool {
 }
 
 fn copy_accelerated_frame_during_callback(info: &AcceleratedPaintInfo, generation: u64) -> i32 {
-    let target = match DMA_BUF_COPY_TARGET.lock() {
-        Ok(target) => *target,
-        Err(_) => return -2,
-    };
-    let Some(target) = target else {
-        return -1;
-    };
     let plane_count = usize::try_from(info.plane_count).unwrap_or_default();
-    let mut frame = ZikzakDmaBufFrame {
+    let mut frame = crate::linux_texture::DmaBufFrame {
         generation,
         plane_count: info.plane_count as u32,
         fds: [-1; 4],
         strides: [0; 4],
         offsets: [0; 4],
-        sizes: [0; 4],
         modifier: info.modifier,
         format: info.format.get_raw(),
         coded_width: info.extra.coded_size.width,
@@ -274,11 +238,10 @@ fn copy_accelerated_frame_during_callback(info: &AcceleratedPaintInfo, generatio
         frame.fds[index] = plane.fd;
         frame.strides[index] = plane.stride;
         frame.offsets[index] = plane.offset;
-        frame.sizes[index] = plane.size;
     }
-    // SAFETY: The callback is synchronously invoked while CEF's DMA-BUF
-    // descriptors and this stack-allocated metadata remain valid.
-    unsafe { (target.callback)(&frame, target.user_data as *mut c_void) }
+    // The Rust texture layer synchronously imports and copies the borrowed
+    // DMA-BUF before CEF returns from this callback.
+    crate::linux_texture::copy_dma_buf(&frame)
 }
 
 wrap_context_menu_handler! {
@@ -694,40 +657,6 @@ pub extern "C" fn zikzak_cef_accelerated_visible_height() -> i32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn zikzak_cef_accelerated_first_plane_stride() -> u32 {
     accelerated_stat(|snapshot| snapshot.first_plane_stride)
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn zikzak_cef_dma_buf_copy_attach(
-    callback: Option<DmaBufCopyCallback>,
-    user_data: *mut c_void,
-) -> i32 {
-    let Some(callback) = callback else {
-        return -1;
-    };
-    if user_data.is_null() {
-        return -1;
-    }
-    let Ok(mut target) = DMA_BUF_COPY_TARGET.lock() else {
-        return -2;
-    };
-    *target = Some(DmaBufCopyTarget {
-        callback,
-        user_data: user_data as usize,
-    });
-    0
-}
-
-#[unsafe(no_mangle)]
-pub extern "C" fn zikzak_cef_dma_buf_copy_detach(user_data: *mut c_void) {
-    let Ok(mut target) = DMA_BUF_COPY_TARGET.lock() else {
-        return;
-    };
-    if target
-        .as_ref()
-        .is_some_and(|target| target.user_data == user_data as usize)
-    {
-        *target = None;
-    }
 }
 
 #[unsafe(no_mangle)]

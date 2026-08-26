@@ -6,12 +6,10 @@
 #endif
 
 #include "flutter/generated_plugin_registrant.h"
-#include "native_texture_bridge.h"
 
 struct _MyApplication {
   GtkApplication parent_instance;
   char** dart_entrypoint_arguments;
-  ZikzakNativeTextureBridge* texture_bridge;
 };
 
 G_DEFINE_TYPE(MyApplication, my_application, GTK_TYPE_APPLICATION)
@@ -75,10 +73,6 @@ static void my_application_activate(GApplication* application) {
                            self);
   gtk_widget_realize(GTK_WIDGET(view));
 
-  // Register the narrow Flutter GL-to-Rust FFI seam. The bridge owns no CEF or
-  // GTK rendering behavior; it only exposes a Flutter external texture.
-  self->texture_bridge = zikzak_native_texture_bridge_new(view);
-
   fl_register_plugins(FL_PLUGIN_REGISTRY(view));
 
   gtk_widget_grab_focus(GTK_WIDGET(view));
@@ -115,19 +109,9 @@ static void my_application_startup(GApplication* application) {
 }
 
 // Implements GApplication::shutdown.
-static void my_application_shutdown(GApplication* application) {
-  MyApplication* self = MY_APPLICATION(application);
-  zikzak_native_texture_bridge_free(self->texture_bridge);
-  self->texture_bridge = nullptr;
-
-  G_APPLICATION_CLASS(my_application_parent_class)->shutdown(application);
-}
-
 // Implements GObject::dispose.
 static void my_application_dispose(GObject* object) {
   MyApplication* self = MY_APPLICATION(object);
-  zikzak_native_texture_bridge_free(self->texture_bridge);
-  self->texture_bridge = nullptr;
   g_clear_pointer(&self->dart_entrypoint_arguments, g_strfreev);
   G_OBJECT_CLASS(my_application_parent_class)->dispose(object);
 }
@@ -137,7 +121,6 @@ static void my_application_class_init(MyApplicationClass* klass) {
   G_APPLICATION_CLASS(klass)->local_command_line =
       my_application_local_command_line;
   G_APPLICATION_CLASS(klass)->startup = my_application_startup;
-  G_APPLICATION_CLASS(klass)->shutdown = my_application_shutdown;
   G_OBJECT_CLASS(klass)->dispose = my_application_dispose;
 }
 

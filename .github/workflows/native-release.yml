@@ -1,0 +1,144 @@
+name: Native release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: GitHub release tag declared in native_prebuilt.yaml
+        required: true
+        default: webview_flutter_linux-v0.1.0-dev.1
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: native-release-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  release-linux-x64:
+    name: Build and release linux-x64
+    runs-on: ubuntu-24.04
+    container:
+      image: archlinux:base-devel
+    env:
+      CONFIG: native_prebuilt.yaml
+      RELEASE_TAG: ${{ inputs.tag }}
+      TARGET: linux-x64
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install Linux build dependencies
+        shell: bash
+        run: |
+          pacman -Syu --noconfirm --needed \
+            curl \
+            git \
+            libepoxy \
+            pkgconf \
+            rustup \
+            unzip \
+            wpewebkit \
+            xz
+
+      - name: Install Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version: 3.47.1
+
+      - name: Validate release inputs
+        shell: bash
+        run: |
+          configured_tag="$(sed -n 's/^  tag: //p' "$CONFIG")"
+          if [[ "$RELEASE_TAG" != "$configured_tag" ]]; then
+            echo "Requested tag '$RELEASE_TAG' does not match '$configured_tag'."
+            exit 1
+          fi
+          pkg-config --atleast-version=2.52 wpe-webkit-2.0
+          flutter --version
+          rustup --version
+          pkg-config --modversion wpe-webkit-2.0 glib-2.0 gio-2.0
+
+      - name: Resolve Dart dependencies
+        run: flutter pub get
+
+      - name: Validate Dart package
+        shell: bash
+        run: |
+          flutter analyze --fatal-infos
+          flutter test
+
+      - name: Build native library from source
+        shell: bash
+        run: |
+          dart run native_prebuilt build \
+            --target "$TARGET" \
+            --output built-library \
+            --from-source \
+            --verbose
+
+      - name: Check native ABI baseline
+        shell: bash
+        run: |
+          library="built-library/$TARGET/libwebview_flutter_linux_native.so"
+          test -f "$library"
+          file "$library"
+          readelf --dynamic "$library" | grep NEEDED
+
+          maximum_glibc="$({
+            readelf --version-info "$library" \
+              | grep -oE 'GLIBC_[0-9]+(\.[0-9]+)*' \
+              | sed 's/^GLIBC_//' \
+              | sort -Vu \
+              | tail -n 1
+          })"
+          if [[ -z "$maximum_glibc" ]]; then
+            echo "Could not determine the library's glibc requirement."
+            exit 1
+          fi
+          if [[ "$(printf '%s\n' 2.34 "$maximum_glibc" | sort -V | tail -n 1)" != "2.34" ]]; then
+            echo "The library requires GLIBC_$maximum_glibc; maximum allowed is GLIBC_2.34."
+            exit 1
+          fi
+          echo "Maximum required glibc symbol version: GLIBC_$maximum_glibc"
+
+      - name: Package and verify release artifact
+        shell: bash
+        run: |
+          dart run native_prebuilt manifest update \
+            --config "$CONFIG" \
+            --output native_prebuilt.lock.yaml \
+            --built-library-dir built-library \
+            --release-assets-dir release-assets \
+            --tag "$RELEASE_TAG"
+          dart run native_prebuilt manifest verify \
+            --config "$CONFIG" \
+            --output native_prebuilt.lock.yaml \
+            --built-library-dir built-library \
+            --release-assets-dir release-assets
+          sha256sum release-assets/* native_prebuilt.lock.yaml
+
+      - name: Preserve release output
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: native-release-${{ inputs.tag }}
+          path: |
+            release-assets/*
+            native_prebuilt.lock.yaml
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish GitHub prerelease
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          name: ${{ inputs.tag }}
+          prerelease: true
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            release-assets/*
+            native_prebuilt.lock.yaml

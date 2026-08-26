@@ -34,6 +34,8 @@ migrate_working_dir/
 /example/build/
 /pubspec.lock
 /coverage/
+/built-library/
+/release-assets/
 /rust/target/
 /third_party/cef/
 /third_party/wpe-sdk

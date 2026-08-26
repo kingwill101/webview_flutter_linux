@@ -10,7 +10,9 @@ import 'package:flutter/widgets.dart';
 
 import 'native_frame_bindings.dart';
 
+/// Describes one entry in a browser-owned context menu.
 final class BrowserContextMenuItem {
+  /// Creates an immutable snapshot of a native menu entry.
   const BrowserContextMenuItem({
     required this.index,
     required this.title,
@@ -18,20 +20,42 @@ final class BrowserContextMenuItem {
     required this.isEnabled,
   });
 
+  /// The index required to activate this item through the native bridge.
   final int index;
+
+  /// The display label with native mnemonic markers removed.
   final String title;
+
+  /// Whether this entry should render as a visual separator.
   final bool isSeparator;
+
+  /// Whether the browser permits this item to be activated.
   final bool isEnabled;
 }
 
+/// A point-in-time copy of the context menu exposed by WPE.
 final class NativeBrowserContextMenu {
+  /// Creates a menu positioned in logical Flutter coordinates.
   const NativeBrowserContextMenu({required this.position, required this.items});
 
+  /// The menu origin relative to the WebView surface.
   final Offset position;
+
+  /// The ordered native menu entries.
   final List<BrowserContextMenuItem> items;
 }
 
+/// Owns one native browser view and its Flutter external texture.
+///
+/// Each instance receives an opaque handle at creation and passes that handle
+/// to every Rust ABI call. Call [dispose] exactly once when the corresponding
+/// widget detaches; methods other than [dispose] reject use after disposal.
 final class NativeFrameRenderer {
+  /// Creates a WPE view attached to the Flutter engine identified by
+  /// [engineHandle].
+  ///
+  /// Native resources created before a constructor failure are released before
+  /// the error is rethrown.
   NativeFrameRenderer({
     required int engineHandle,
     String initialUrl = 'about:blank',
@@ -68,7 +92,10 @@ final class NativeFrameRenderer {
     }
   }
 
+  /// The ABI version reported by the loaded native library.
   final int apiVersion;
+
+  /// The opaque identifier for this renderer's native view.
   late final int handle;
   int _lastRequestedTextureGeneration = -1;
   int _lastPaintCount = 0;
@@ -77,11 +104,22 @@ final class NativeFrameRenderer {
   double _deviceScaleFactor = 1;
   bool _disposed = false;
 
+  /// The external texture identifier registered with the Flutter engine.
   int get textureId => webviewFlutterLinuxTextureId(handle);
+
+  /// The current native texture width in physical pixels.
   int get textureWidth => webviewFlutterLinuxTextureWidth(handle);
+
+  /// The current native texture height in physical pixels.
   int get textureHeight => webviewFlutterLinuxTextureHeight(handle);
+
+  /// The number of frames the WPE view has painted.
   int get paintCount => webviewFlutterLinuxWpePaintCount(handle);
 
+  /// Advances native work and requests a Flutter frame when content changed.
+  ///
+  /// Returns whether a texture generation or WPE paint counter changed during
+  /// this call.
   bool pump() {
     _ensureAlive();
     _checkStatus('WPE event pump', webviewFlutterLinuxWpePump(handle));
@@ -100,6 +138,7 @@ final class NativeFrameRenderer {
     return false;
   }
 
+  /// Navigates the native view to [url].
   void navigate(String url) {
     _ensureAlive();
     final nativeUrl = url.toNativeUtf8();
@@ -113,6 +152,11 @@ final class NativeFrameRenderer {
     }
   }
 
+  /// Resizes the browser surface from logical Flutter dimensions.
+  ///
+  /// [deviceScaleFactor] is clamped before calculating physical dimensions;
+  /// each dimension is then constrained to the native bridge's supported
+  /// range.
   void resizeSurface({
     required double logicalWidth,
     required double logicalHeight,
@@ -134,6 +178,7 @@ final class NativeFrameRenderer {
     );
   }
 
+  /// Updates native keyboard focus.
   void setFocus(bool focused) {
     _ensureAlive();
     _checkStatus(
@@ -142,6 +187,7 @@ final class NativeFrameRenderer {
     );
   }
 
+  /// Updates native page visibility and rendering activity.
   void setVisibility(bool visible) {
     _ensureAlive();
     _checkStatus(
@@ -150,6 +196,7 @@ final class NativeFrameRenderer {
     );
   }
 
+  /// Sends a pointer movement or leave event using logical coordinates.
   void sendMouseMove({
     required int x,
     required int y,
@@ -169,6 +216,7 @@ final class NativeFrameRenderer {
     );
   }
 
+  /// Sends a pointer-button transition using logical coordinates.
   void sendMouseButton({
     required int x,
     required int y,
@@ -192,6 +240,7 @@ final class NativeFrameRenderer {
     );
   }
 
+  /// Sends a wheel event using logical pointer coordinates.
   void sendMouseWheel({
     required int x,
     required int y,
@@ -213,6 +262,7 @@ final class NativeFrameRenderer {
     );
   }
 
+  /// Sends a Chromium-compatible key event to WPE.
   void sendKey({
     required int eventType,
     required int modifiers,
@@ -236,6 +286,7 @@ final class NativeFrameRenderer {
     );
   }
 
+  /// Copies [text] into the clipboard exposed to the browser process.
   void setClipboardText(String text) {
     _ensureAlive();
     final nativeText = text.toNativeUtf8();
@@ -252,6 +303,11 @@ final class NativeFrameRenderer {
     }
   }
 
+  /// Returns newly changed browser clipboard text, if any.
+  ///
+  /// The native revision counter prevents Flutter from repeatedly importing
+  /// the same value. A `null` result means no new text is available, while an
+  /// empty string represents a new empty clipboard value.
   String? takeClipboardText() {
     _ensureAlive();
     final changeCount = webviewFlutterLinuxWpeClipboardChangeCount(handle);
@@ -278,6 +334,10 @@ final class NativeFrameRenderer {
     }
   }
 
+  /// Returns a newly exposed native context-menu snapshot, if any.
+  ///
+  /// Native physical coordinates are converted back to logical Flutter
+  /// coordinates using the most recently applied device scale factor.
   NativeBrowserContextMenu? takeContextMenu() {
     _ensureAlive();
     final generation = webviewFlutterLinuxWpeContextMenuGeneration(handle);
@@ -334,6 +394,7 @@ final class NativeFrameRenderer {
     );
   }
 
+  /// Activates the native context-menu entry at [index].
   void activateContextMenuItem(int index) {
     _ensureAlive();
     _checkStatus(
@@ -342,6 +403,7 @@ final class NativeFrameRenderer {
     );
   }
 
+  /// Dismisses the current native context menu when this renderer is alive.
   void dismissContextMenu() {
     if (!_disposed) webviewFlutterLinuxWpeContextMenuDismiss(handle);
   }
@@ -364,6 +426,9 @@ final class NativeFrameRenderer {
     throw StateError('$operation failed with status $status.');
   }
 
+  /// Releases this renderer's native view and external texture.
+  ///
+  /// Repeated calls are safe and do not cross the FFI boundary again.
   void dispose() {
     if (_disposed) return;
     _disposed = true;

@@ -12,9 +12,13 @@ import 'package:webview_flutter_platform_interface/webview_flutter_platform_inte
 import 'linux_navigation_delegate.dart';
 import 'native_frame_renderer.dart';
 
-/// Linux implementation of [PlatformWebViewController].
+/// Coordinates WebView API calls with a lazily attached native WPE renderer.
+///
+/// Navigation requested before the widget mounts is retained and used as the
+/// native view's initial URL. The current back/forward list is maintained in
+/// Dart; it does not yet observe navigations initiated within page content.
 class LinuxWebViewController extends PlatformWebViewController {
-  /// Creates a Linux WebView controller.
+  /// Creates a controller without immediately allocating native resources.
   // ignore: use_super_parameters
   LinuxWebViewController(PlatformWebViewControllerCreationParams params)
     : super.implementation(params);
@@ -26,9 +30,16 @@ class LinuxWebViewController extends PlatformWebViewController {
   LinuxNavigationDelegate? _navigationDelegate;
   bool _waitingForFirstPaint = false;
 
-  /// The currently attached native renderer, if the widget is mounted.
+  /// The renderer owned by the mounted WebView widget, if one is attached.
+  ///
+  /// This is exposed for the Linux widget implementation and is not part of the
+  /// platform-independent `webview_flutter` API.
   NativeFrameRenderer? get renderer => _renderer;
 
+  /// Returns the existing renderer or creates one for the current engine.
+  ///
+  /// The caller assumes ownership of the attachment and must eventually pass
+  /// the returned instance to [detachRenderer].
   Future<NativeFrameRenderer> attachRenderer() async {
     final existing = _renderer;
     if (existing != null) return existing;
@@ -44,12 +55,20 @@ class LinuxWebViewController extends PlatformWebViewController {
     return renderer;
   }
 
+  /// Disposes [renderer] when it is the controller's current attachment.
+  ///
+  /// A stale widget may safely attempt to detach an older renderer; identity
+  /// checking prevents it from disposing a newer attachment.
   void detachRenderer(NativeFrameRenderer renderer) {
     if (!identical(renderer, _renderer)) return;
     _renderer = null;
     renderer.dispose();
   }
 
+  /// Completes a pending synthetic navigation after its first painted frame.
+  ///
+  /// Native load-state events are not forwarded yet, so first paint is used as
+  /// the observable completion boundary for controller-initiated navigation.
   void didPaintFrame() {
     if (!_waitingForFirstPaint) return;
     _waitingForFirstPaint = false;
@@ -96,6 +115,10 @@ class LinuxWebViewController extends PlatformWebViewController {
     );
   }
 
+  /// Loads a GET request without custom headers or a request body.
+  ///
+  /// Throws [ArgumentError] when the URI has no scheme and [UnsupportedError]
+  /// for request shapes that the native command bridge does not yet support.
   @override
   Future<void> loadRequest(LoadRequestParams params) async {
     if (!params.uri.hasScheme) {

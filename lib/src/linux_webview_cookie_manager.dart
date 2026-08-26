@@ -9,7 +9,7 @@ import 'package:webview_flutter_platform_interface/webview_flutter_platform_inte
 /// Cookie APIs are deliberately left unsupported until the WPE cookie store is
 /// exposed through the native command bridge.
 class LinuxWebViewCookieManager extends PlatformWebViewCookieManager {
-  /// Creates a Linux cookie manager.
+  /// Creates a placeholder without allocating a native cookie store.
   // ignore: use_super_parameters
   LinuxWebViewCookieManager(PlatformWebViewCookieManagerCreationParams params)
     : super.implementation(params);

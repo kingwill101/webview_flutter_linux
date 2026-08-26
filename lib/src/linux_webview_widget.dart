@@ -13,9 +13,12 @@ import 'linux_webview_controller.dart';
 import 'native_frame_renderer.dart';
 import 'wpe_keyboard.dart';
 
-/// Linux implementation of [PlatformWebViewWidget].
+/// Builds the Flutter texture surface for a [LinuxWebViewController].
+///
+/// Pointer, keyboard, clipboard, lifecycle, and context-menu events cross the
+/// Dart-to-Rust boundary through the renderer owned by the mounted surface.
 class LinuxWebViewWidget extends PlatformWebViewWidget {
-  /// Creates a Linux WebView widget delegate.
+  /// Creates a widget delegate and verifies its controller is Linux-backed.
   LinuxWebViewWidget(PlatformWebViewWidgetCreationParams params)
     : super.implementation(params) {
     if (params.controller is! LinuxWebViewController) {
@@ -34,6 +37,7 @@ class LinuxWebViewWidget extends PlatformWebViewWidget {
   );
 }
 
+/// Owns the mounted relationship between a controller and native renderer.
 class _LinuxWebViewSurface extends StatefulWidget {
   const _LinuxWebViewSurface({super.key, required this.controller});
 
@@ -43,6 +47,7 @@ class _LinuxWebViewSurface extends StatefulWidget {
   State<_LinuxWebViewSurface> createState() => _LinuxWebViewSurfaceState();
 }
 
+/// Pumps native events and translates Flutter input for a WebView texture.
 class _LinuxWebViewSurfaceState extends State<_LinuxWebViewSurface>
     with WidgetsBindingObserver {
   final FocusNode _focusNode = FocusNode(debugLabel: 'Linux WebView');
@@ -83,6 +88,11 @@ class _LinuxWebViewSurfaceState extends State<_LinuxWebViewSurface>
     }
   }
 
+  /// Advances the native event loop and mirrors browser-owned UI state.
+  ///
+  /// WPE runs without a GTK widget, so Flutter periodically drives its GLib
+  /// context. The same tick requests changed texture frames and imports native
+  /// clipboard and context-menu state into Flutter.
   void _pump() {
     final renderer = _renderer;
     if (!mounted || renderer == null) return;
@@ -187,6 +197,7 @@ class _LinuxWebViewSurfaceState extends State<_LinuxWebViewSurface>
     );
   }
 
+  /// Coalesces layout changes and applies them after the current build frame.
   void _scheduleResize(Size size, double scale) {
     if (_requestedSize == size && _requestedScale == scale) return;
     _requestedSize = size;
@@ -273,6 +284,7 @@ class _LinuxWebViewSurfaceState extends State<_LinuxWebViewSurface>
     _pressedButtons = 0;
   }
 
+  /// Sends every changed Flutter button bit as a distinct browser event.
   void _sendChangedButtons(
     int buttons,
     Offset position, {
@@ -362,6 +374,10 @@ class _LinuxWebViewSurfaceState extends State<_LinuxWebViewSurface>
     _renderer?.setClipboardText(data?.text ?? '');
   }
 
+  /// Serializes input that depends on asynchronous clipboard synchronization.
+  ///
+  /// In particular, paste shortcuts and secondary-button presses must update
+  /// the browser clipboard before WPE receives the triggering event.
   void _enqueueInput(Future<void> Function() action) {
     _inputQueue = _inputQueue.then((_) => action()).catchError((Object error) {
       if (mounted) setState(() => _error = error);
@@ -376,6 +392,7 @@ class _LinuxWebViewSurfaceState extends State<_LinuxWebViewSurface>
     }
   }
 
+  /// Converts a logical local position into a bounded WPE surface coordinate.
   (int, int) _surfacePoint(Offset position) {
     final size = _requestedSize;
     final maxX = size == null ? 16383 : (size.width.ceil() - 1).clamp(0, 16383);
@@ -411,6 +428,7 @@ class _LinuxWebViewSurfaceState extends State<_LinuxWebViewSurface>
             : 0);
   }
 
+  /// Presents WPE's menu model using Flutter widgets and returns the selection.
   Future<void> _showContextMenu(NativeBrowserContextMenu menu) async {
     if (_contextMenuOpen || !mounted || menu.items.isEmpty) return;
     final surfaceBox =

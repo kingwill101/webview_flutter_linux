@@ -8,6 +8,12 @@ import 'package:code_assets/code_assets.dart';
 import 'package:hooks/hooks.dart';
 import 'package:native_toolchain_rust/native_toolchain_rust.dart';
 
+/// Builds and registers the Rust WebView bridge as a Dart code asset.
+///
+/// The hook tracks the Cargo build inputs so package rebuilds follow Rust
+/// changes. When an unpacked development WPE SDK exists under `third_party`,
+/// its pkg-config metadata and libraries take precedence; release consumers
+/// otherwise resolve WPE from their system toolchain.
 void main(List<String> arguments) async {
   await build(arguments, (input, output) async {
     if (!input.config.buildCodeAssets) return;

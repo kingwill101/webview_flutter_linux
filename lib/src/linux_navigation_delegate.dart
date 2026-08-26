@@ -4,21 +4,43 @@
 
 import 'package:webview_flutter_platform_interface/webview_flutter_platform_interface.dart';
 
-/// Linux implementation of navigation callbacks for `webview_flutter`.
+/// Stores navigation callbacks used by the Linux WebView implementation.
+///
+/// The controller currently reports navigation requests, URL changes, page
+/// starts, progress, and page completion. The remaining callbacks are retained
+/// here so native WPE events can be connected without changing the public
+/// platform-delegate contract.
 class LinuxNavigationDelegate extends PlatformNavigationDelegate {
-  /// Creates a Linux navigation delegate.
+  /// Creates a delegate for the supplied platform-interface parameters.
   // ignore: use_super_parameters
   LinuxNavigationDelegate(PlatformNavigationDelegateCreationParams params)
     : super.implementation(params);
 
+  /// Invoked before a controller-initiated main-frame navigation.
   NavigationRequestCallback? onNavigationRequest;
+
+  /// Invoked when a controller-initiated navigation starts.
   PageEventCallback? onPageStarted;
+
+  /// Invoked after the first painted frame for a requested URL.
   PageEventCallback? onPageFinished;
+
+  /// Receives HTTP response failures once native event forwarding supports it.
   HttpResponseErrorCallback? onHttpError;
+
+  /// Receives the synthetic start and completion progress values.
   ProgressCallback? onProgress;
+
+  /// Receives resource failures once native event forwarding supports it.
   WebResourceErrorCallback? onWebResourceError;
+
+  /// Invoked when the controller changes its current URL.
   UrlChangeCallback? onUrlChange;
+
+  /// Receives authentication challenges once the native bridge supports them.
   HttpAuthRequestCallback? onHttpAuthRequest;
+
+  /// Receives TLS certificate failures once the native bridge supports them.
   SslAuthErrorCallback? onSslAuthError;
 
   @override

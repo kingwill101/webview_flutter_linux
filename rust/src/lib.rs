@@ -5,7 +5,7 @@ use std::f32::consts::TAU;
 #[cfg(feature = "cef-runtime")]
 mod cef_runtime;
 
-const API_VERSION: u32 = 1;
+const API_VERSION: u32 = 2;
 const WIDTH: usize = 800;
 const HEIGHT: usize = 450;
 const BYTES_PER_PIXEL: usize = 4;

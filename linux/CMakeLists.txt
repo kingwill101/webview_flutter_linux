@@ -155,7 +155,6 @@ set(CEF_RUNTIME_FILES
   icudtl.dat
   libEGL.so
   libGLESv2.so
-  libcef.so
   libvk_swiftshader.so
   libvulkan.so.1
   resources.pak

@@ -15,18 +15,17 @@ final class NativeFrameRenderer {
     bool enableCef = true,
     String initialUrl = 'https://example.com',
   }) : apiVersion = zikzakApiVersion(),
-       width = zikzakFrameWidth(),
-       height = zikzakFrameHeight(),
-       byteLength = zikzakFrameByteLength() {
-    final expectedLength = width * height * 4;
-    if (byteLength != expectedLength) {
+       _width = zikzakFrameWidth(),
+       _height = zikzakFrameHeight(),
+       _byteLength = zikzakFrameByteLength() {
+    final expectedLength = _width * _height * 4;
+    if (_byteLength != expectedLength) {
       throw StateError(
-        'Rust ABI returned $byteLength bytes for a '
-        '${width}x$height RGBA frame; expected $expectedLength.',
+        'Rust ABI returned $_byteLength bytes for a '
+        '${_width}x$_height RGBA frame; expected $expectedLength.',
       );
     }
-    _destination = calloc<Uint8>(byteLength);
-    _pixels = _destination.asTypedList(byteLength);
+    _allocateBuffer(_byteLength);
 
     if (enableCef) {
       final executableDirectory = File(Platform.resolvedExecutable).parent;
@@ -42,16 +41,23 @@ final class NativeFrameRenderer {
   }
 
   final int apiVersion;
-  final int width;
-  final int height;
-  final int byteLength;
+  int _width;
+  int _height;
+  int _byteLength;
 
-  late final Pointer<Uint8> _destination;
-  late final Uint8List _pixels;
+  late Pointer<Uint8> _destination;
+  late Uint8List _pixels;
+  int? _logicalWidth;
+  int? _logicalHeight;
+  double? _deviceScaleFactor;
   bool cefEnabled = false;
   bool cefFrameReady = false;
   int cefFrameGeneration = 0;
   bool _disposed = false;
+
+  int get width => _width;
+  int get height => _height;
+  int get byteLength => _byteLength;
 
   Future<ui.Image?> render(int frameNumber) {
     if (_disposed) {
@@ -65,7 +71,20 @@ final class NativeFrameRenderer {
       }
       final generation = zikzakCefFrameGeneration();
       if (generation > cefFrameGeneration) {
-        final copyStatus = zikzakCefCopyLatestFrame(_destination, byteLength);
+        final frameWidth = zikzakCefFrameWidth();
+        final frameHeight = zikzakCefFrameHeight();
+        final frameByteLength = zikzakCefFrameByteLength();
+        final expectedLength = frameWidth * frameHeight * 4;
+        if (frameWidth <= 0 ||
+            frameHeight <= 0 ||
+            frameByteLength != expectedLength) {
+          throw StateError(
+            'CEF reported an invalid frame: '
+            '${frameWidth}x$frameHeight, $frameByteLength bytes.',
+          );
+        }
+        _resizeBuffer(frameWidth, frameHeight, frameByteLength);
+        final copyStatus = zikzakCefCopyLatestFrame(_destination, _byteLength);
         if (copyStatus < 0) {
           throw StateError('CEF frame copy failed with status $copyStatus.');
         }
@@ -81,7 +100,7 @@ final class NativeFrameRenderer {
     if (!cefFrameReady) {
       final result = zikzakRenderTestFrame(
         _destination,
-        byteLength,
+        _byteLength,
         frameNumber,
       );
       if (result != 0) {
@@ -92,8 +111,8 @@ final class NativeFrameRenderer {
     final image = Completer<ui.Image>();
     ui.decodeImageFromPixels(
       _pixels,
-      width,
-      height,
+      _width,
+      _height,
       ui.PixelFormat.rgba8888,
       image.complete,
     );
@@ -111,6 +130,122 @@ final class NativeFrameRenderer {
     } finally {
       calloc.free(nativeUrl);
     }
+  }
+
+  void resizeSurface({
+    required double logicalWidth,
+    required double logicalHeight,
+    required double deviceScaleFactor,
+  }) {
+    if (!cefEnabled || _disposed) return;
+    final width = logicalWidth.ceil().clamp(1, 8192);
+    final height = logicalHeight.ceil().clamp(1, 8192);
+    final scale = deviceScaleFactor.clamp(0.5, 4.0).toDouble();
+    if (_logicalWidth == width &&
+        _logicalHeight == height &&
+        _deviceScaleFactor == scale) {
+      return;
+    }
+    final status = zikzakCefResize(width, height, scale);
+    if (status != 0) {
+      throw StateError('CEF surface resize failed with status $status.');
+    }
+    _logicalWidth = width;
+    _logicalHeight = height;
+    _deviceScaleFactor = scale;
+  }
+
+  void setFocus(bool focused) {
+    _checkInputStatus('focus', zikzakCefSetFocus(focused ? 1 : 0));
+  }
+
+  void sendMouseMove({
+    required int x,
+    required int y,
+    required int modifiers,
+    bool mouseLeave = false,
+  }) {
+    _checkInputStatus(
+      'mouse move',
+      zikzakCefSendMouseMove(x, y, modifiers, mouseLeave ? 1 : 0),
+    );
+  }
+
+  void sendMouseButton({
+    required int x,
+    required int y,
+    required int modifiers,
+    required int button,
+    required bool mouseUp,
+    int clickCount = 1,
+  }) {
+    _checkInputStatus(
+      'mouse button',
+      zikzakCefSendMouseButton(
+        x,
+        y,
+        modifiers,
+        button,
+        mouseUp ? 1 : 0,
+        clickCount,
+      ),
+    );
+  }
+
+  void sendMouseWheel({
+    required int x,
+    required int y,
+    required int modifiers,
+    required int deltaX,
+    required int deltaY,
+  }) {
+    _checkInputStatus(
+      'mouse wheel',
+      zikzakCefSendMouseWheel(x, y, modifiers, deltaX, deltaY),
+    );
+  }
+
+  void sendKey({
+    required int eventType,
+    required int modifiers,
+    required int windowsKeyCode,
+    required int nativeKeyCode,
+    int character = 0,
+    int unmodifiedCharacter = 0,
+  }) {
+    _checkInputStatus(
+      'key',
+      zikzakCefSendKey(
+        eventType,
+        modifiers,
+        windowsKeyCode,
+        nativeKeyCode,
+        character,
+        unmodifiedCharacter,
+      ),
+    );
+  }
+
+  void _checkInputStatus(String operation, int status) {
+    if (!cefEnabled || _disposed) return;
+    if (status != 0) {
+      throw StateError('CEF $operation failed with status $status.');
+    }
+  }
+
+  void _allocateBuffer(int length) {
+    _destination = calloc<Uint8>(length);
+    _pixels = _destination.asTypedList(length);
+  }
+
+  void _resizeBuffer(int width, int height, int length) {
+    if (_byteLength != length) {
+      calloc.free(_destination);
+      _byteLength = length;
+      _allocateBuffer(length);
+    }
+    _width = width;
+    _height = height;
   }
 
   bool _initializeCef(String runtimeDirectory, String initialUrl) {

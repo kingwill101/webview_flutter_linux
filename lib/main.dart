@@ -5,9 +5,12 @@ import 'dart:io' show Platform;
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:marionette_flutter/marionette_flutter.dart';
 
+import 'src/cef_keyboard.dart';
 import 'src/native_frame_renderer.dart';
 
 void main() {
@@ -72,6 +75,7 @@ class ProbePage extends StatefulWidget {
 
 class _ProbePageState extends State<ProbePage> {
   final _addressController = TextEditingController(text: 'https://example.com');
+  final _surfaceFocusNode = FocusNode(debugLabel: 'CEF browser surface');
   NativeFrameRenderer? _renderer;
   Timer? _frameTimer;
   ui.Image? _image;
@@ -79,6 +83,11 @@ class _ProbePageState extends State<ProbePage> {
   int _frameNumber = 0;
   int _framesRendered = 0;
   bool _frameInFlight = false;
+  int _pressedButtons = 0;
+  Offset _lastPointerPosition = Offset.zero;
+  Size? _requestedSurfaceSize;
+  double? _requestedDeviceScaleFactor;
+  bool _resizeScheduled = false;
 
   @override
   void initState() {
@@ -137,6 +146,7 @@ class _ProbePageState extends State<ProbePage> {
   void dispose() {
     _frameTimer?.cancel();
     _addressController.dispose();
+    _surfaceFocusNode.dispose();
     _image?.dispose();
     _renderer?.dispose();
     super.dispose();
@@ -272,15 +282,238 @@ class _ProbePageState extends State<ProbePage> {
       );
     }
 
-    if (_image case final image?) {
-      return RawImage(
-        image: image,
-        fit: BoxFit.contain,
-        filterQuality: FilterQuality.medium,
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final size = Size(constraints.maxWidth, constraints.maxHeight);
+        _scheduleSurfaceResize(size, MediaQuery.devicePixelRatioOf(context));
+        return Focus(
+          focusNode: _surfaceFocusNode,
+          onFocusChange: (focused) {
+            _runCefAction(() => _renderer?.setFocus(focused));
+          },
+          onKeyEvent: _handleKeyEvent,
+          child: MouseRegion(
+            cursor: SystemMouseCursors.basic,
+            onExit: _handlePointerExit,
+            child: Listener(
+              key: const ValueKey('browser-surface'),
+              behavior: HitTestBehavior.opaque,
+              onPointerDown: _handlePointerDown,
+              onPointerUp: _handlePointerUp,
+              onPointerCancel: _handlePointerCancel,
+              onPointerMove: _handlePointerMove,
+              onPointerHover: _handlePointerMove,
+              onPointerSignal: _handlePointerSignal,
+              child: _image != null
+                  ? RawImage(
+                      image: _image,
+                      fit: BoxFit.fill,
+                      filterQuality: FilterQuality.none,
+                    )
+                  : const Center(child: CircularProgressIndicator()),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _scheduleSurfaceResize(Size size, double deviceScaleFactor) {
+    if (!size.width.isFinite ||
+        !size.height.isFinite ||
+        size.width <= 0 ||
+        size.height <= 0) {
+      return;
+    }
+    if (_requestedSurfaceSize == size &&
+        _requestedDeviceScaleFactor == deviceScaleFactor) {
+      return;
+    }
+    _requestedSurfaceSize = size;
+    _requestedDeviceScaleFactor = deviceScaleFactor;
+    if (_resizeScheduled) return;
+    _resizeScheduled = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _resizeScheduled = false;
+      if (!mounted) return;
+      final requestedSize = _requestedSurfaceSize;
+      final requestedScale = _requestedDeviceScaleFactor;
+      if (requestedSize == null || requestedScale == null) return;
+      _runCefAction(
+        () => _renderer?.resizeSurface(
+          logicalWidth: requestedSize.width,
+          logicalHeight: requestedSize.height,
+          deviceScaleFactor: requestedScale,
+        ),
+      );
+    });
+  }
+
+  void _handlePointerMove(PointerEvent event) {
+    _lastPointerPosition = event.localPosition;
+    final point = _cefPoint(event.localPosition);
+    _runCefAction(
+      () => _renderer?.sendMouseMove(
+        x: point.$1,
+        y: point.$2,
+        modifiers: _cefModifiers(buttons: event.buttons),
+      ),
+    );
+  }
+
+  void _handlePointerExit(PointerExitEvent event) {
+    _lastPointerPosition = event.localPosition;
+    final point = _cefPoint(event.localPosition);
+    _runCefAction(
+      () => _renderer?.sendMouseMove(
+        x: point.$1,
+        y: point.$2,
+        modifiers: _cefModifiers(buttons: event.buttons),
+        mouseLeave: true,
+      ),
+    );
+  }
+
+  void _handlePointerDown(PointerDownEvent event) {
+    _surfaceFocusNode.requestFocus();
+    _lastPointerPosition = event.localPosition;
+    final addedButtons = event.buttons & ~_pressedButtons;
+    _pressedButtons = event.buttons;
+    _sendChangedButtons(event.localPosition, addedButtons, mouseUp: false);
+  }
+
+  void _handlePointerUp(PointerUpEvent event) {
+    _lastPointerPosition = event.localPosition;
+    final releasedButtons = _pressedButtons & ~event.buttons;
+    _sendChangedButtons(event.localPosition, releasedButtons, mouseUp: true);
+    _pressedButtons = event.buttons;
+  }
+
+  void _handlePointerCancel(PointerCancelEvent event) {
+    _sendChangedButtons(_lastPointerPosition, _pressedButtons, mouseUp: true);
+    _pressedButtons = 0;
+  }
+
+  void _sendChangedButtons(
+    Offset position,
+    int buttons, {
+    required bool mouseUp,
+  }) {
+    final point = _cefPoint(position);
+    for (final entry in const <(int, int)>[
+      (kPrimaryMouseButton, 0),
+      (kMiddleMouseButton, 1),
+      (kSecondaryMouseButton, 2),
+    ]) {
+      if (buttons & entry.$1 == 0) continue;
+      _runCefAction(
+        () => _renderer?.sendMouseButton(
+          x: point.$1,
+          y: point.$2,
+          modifiers: _cefModifiers(buttons: _pressedButtons),
+          button: entry.$2,
+          mouseUp: mouseUp,
+        ),
       );
     }
+  }
 
-    return const Center(child: CircularProgressIndicator());
+  void _handlePointerSignal(PointerSignalEvent event) {
+    if (event is! PointerScrollEvent) return;
+    _lastPointerPosition = event.localPosition;
+    final point = _cefPoint(event.localPosition);
+    _runCefAction(
+      () => _renderer?.sendMouseWheel(
+        x: point.$1,
+        y: point.$2,
+        modifiers: _cefModifiers(buttons: event.buttons),
+        deltaX: -event.scrollDelta.dx.round(),
+        deltaY: -event.scrollDelta.dy.round(),
+      ),
+    );
+  }
+
+  KeyEventResult _handleKeyEvent(FocusNode node, KeyEvent event) {
+    final windowsKeyCode = cefWindowsKeyCode(event.logicalKey);
+    if (windowsKeyCode == null) return KeyEventResult.ignored;
+    final modifiers = _cefModifiers(buttons: _pressedButtons);
+    final eventType = event is KeyUpEvent
+        ? cefKeyEventKeyUp
+        : cefKeyEventRawKeyDown;
+    _runCefAction(
+      () => _renderer?.sendKey(
+        eventType: eventType,
+        modifiers: modifiers,
+        windowsKeyCode: windowsKeyCode,
+        nativeKeyCode: event.physicalKey.usbHidUsage,
+      ),
+    );
+
+    final character = event.character;
+    final keyboard = HardwareKeyboard.instance;
+    if (event is! KeyUpEvent &&
+        character != null &&
+        character.isNotEmpty &&
+        !keyboard.isControlPressed &&
+        !keyboard.isMetaPressed &&
+        !keyboard.isAltPressed) {
+      for (final codeUnit in character.codeUnits) {
+        _runCefAction(
+          () => _renderer?.sendKey(
+            eventType: cefKeyEventCharacter,
+            modifiers: modifiers,
+            windowsKeyCode: windowsKeyCode,
+            nativeKeyCode: event.physicalKey.usbHidUsage,
+            character: codeUnit,
+            unmodifiedCharacter: codeUnit,
+          ),
+        );
+      }
+    }
+    return KeyEventResult.handled;
+  }
+
+  (int, int) _cefPoint(Offset position) {
+    final size = _requestedSurfaceSize;
+    final maxX = size == null ? 16383 : (size.width.ceil() - 1).clamp(0, 16383);
+    final maxY = size == null
+        ? 16383
+        : (size.height.ceil() - 1).clamp(0, 16383);
+    return (
+      position.dx.floor().clamp(0, maxX),
+      position.dy.floor().clamp(0, maxY),
+    );
+  }
+
+  int _cefModifiers({required int buttons}) {
+    final keyboard = HardwareKeyboard.instance;
+    var modifiers = cefKeyboardModifiers(
+      shift: keyboard.isShiftPressed,
+      control: keyboard.isControlPressed,
+      alt: keyboard.isAltPressed,
+      meta: keyboard.isMetaPressed,
+      capsLock: keyboard.lockModesEnabled.contains(KeyboardLockMode.capsLock),
+      numLock: keyboard.lockModesEnabled.contains(KeyboardLockMode.numLock),
+    );
+    if (buttons & kPrimaryMouseButton != 0) {
+      modifiers |= cefEventFlagLeftMouseButton;
+    }
+    if (buttons & kMiddleMouseButton != 0) {
+      modifiers |= cefEventFlagMiddleMouseButton;
+    }
+    if (buttons & kSecondaryMouseButton != 0) {
+      modifiers |= cefEventFlagRightMouseButton;
+    }
+    return modifiers;
+  }
+
+  void _runCefAction(void Function() action) {
+    try {
+      action();
+    } catch (error) {
+      _frameTimer?.cancel();
+      if (mounted) setState(() => _error = error);
+    }
   }
 }
 

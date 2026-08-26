@@ -6,7 +6,9 @@ import 'package:cef_texture_browser/main.dart';
 
 void main() {
   testWidgets('Rust native frame reaches the Flutter surface', (tester) async {
-    await tester.pumpWidget(const ProbeApp(animate: false, enableCef: false));
+    await tester.pumpWidget(
+      const ProbeApp(animate: false, enableBrowser: false),
+    );
     await tester.pump(const Duration(milliseconds: 1));
     await tester.runAsync(
       () => Future<void>.delayed(const Duration(milliseconds: 250)),
@@ -20,7 +22,7 @@ void main() {
         .whereType<String>()
         .join('\n');
 
-    expect(find.text('Rust FFI browser-surface probe'), findsOneWidget);
+    expect(find.text('Browser Texture Experiment'), findsOneWidget);
     expect(
       find.text('Rust native asset online'),
       findsOneWidget,

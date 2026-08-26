@@ -1,5 +1,8 @@
 // SPDX-License-Identifier: UNLICENSED
-#![cfg_attr(not(feature = "cef-runtime"), allow(dead_code))]
+#![cfg_attr(
+    not(any(feature = "cef-runtime", feature = "wpe-runtime")),
+    allow(dead_code)
+)]
 
 use std::{
     ffi::{c_char, c_void},
@@ -66,8 +69,53 @@ const EGL_LINUX_DRM_FOURCC_EXT: i32 = 0x3271;
 const EGL_DMA_BUF_PLANE0_FD_EXT: i32 = 0x3272;
 const EGL_DMA_BUF_PLANE0_OFFSET_EXT: i32 = 0x3273;
 const EGL_DMA_BUF_PLANE0_PITCH_EXT: i32 = 0x3274;
+const EGL_DMA_BUF_PLANE1_FD_EXT: i32 = 0x3275;
+const EGL_DMA_BUF_PLANE1_OFFSET_EXT: i32 = 0x3276;
+const EGL_DMA_BUF_PLANE1_PITCH_EXT: i32 = 0x3277;
+const EGL_DMA_BUF_PLANE2_FD_EXT: i32 = 0x3278;
+const EGL_DMA_BUF_PLANE2_OFFSET_EXT: i32 = 0x3279;
+const EGL_DMA_BUF_PLANE2_PITCH_EXT: i32 = 0x327A;
+const EGL_DMA_BUF_PLANE3_FD_EXT: i32 = 0x3440;
+const EGL_DMA_BUF_PLANE3_OFFSET_EXT: i32 = 0x3441;
+const EGL_DMA_BUF_PLANE3_PITCH_EXT: i32 = 0x3442;
 const EGL_DMA_BUF_PLANE0_MODIFIER_LO_EXT: i32 = 0x3443;
 const EGL_DMA_BUF_PLANE0_MODIFIER_HI_EXT: i32 = 0x3444;
+const EGL_DMA_BUF_PLANE1_MODIFIER_LO_EXT: i32 = 0x3445;
+const EGL_DMA_BUF_PLANE1_MODIFIER_HI_EXT: i32 = 0x3446;
+const EGL_DMA_BUF_PLANE2_MODIFIER_LO_EXT: i32 = 0x3447;
+const EGL_DMA_BUF_PLANE2_MODIFIER_HI_EXT: i32 = 0x3448;
+const EGL_DMA_BUF_PLANE3_MODIFIER_LO_EXT: i32 = 0x3449;
+const EGL_DMA_BUF_PLANE3_MODIFIER_HI_EXT: i32 = 0x344A;
+const EGL_DMA_BUF_PLANE_FD_ATTRIBUTES: [i32; 4] = [
+    EGL_DMA_BUF_PLANE0_FD_EXT,
+    EGL_DMA_BUF_PLANE1_FD_EXT,
+    EGL_DMA_BUF_PLANE2_FD_EXT,
+    EGL_DMA_BUF_PLANE3_FD_EXT,
+];
+const EGL_DMA_BUF_PLANE_OFFSET_ATTRIBUTES: [i32; 4] = [
+    EGL_DMA_BUF_PLANE0_OFFSET_EXT,
+    EGL_DMA_BUF_PLANE1_OFFSET_EXT,
+    EGL_DMA_BUF_PLANE2_OFFSET_EXT,
+    EGL_DMA_BUF_PLANE3_OFFSET_EXT,
+];
+const EGL_DMA_BUF_PLANE_PITCH_ATTRIBUTES: [i32; 4] = [
+    EGL_DMA_BUF_PLANE0_PITCH_EXT,
+    EGL_DMA_BUF_PLANE1_PITCH_EXT,
+    EGL_DMA_BUF_PLANE2_PITCH_EXT,
+    EGL_DMA_BUF_PLANE3_PITCH_EXT,
+];
+const EGL_DMA_BUF_PLANE_MODIFIER_LO_ATTRIBUTES: [i32; 4] = [
+    EGL_DMA_BUF_PLANE0_MODIFIER_LO_EXT,
+    EGL_DMA_BUF_PLANE1_MODIFIER_LO_EXT,
+    EGL_DMA_BUF_PLANE2_MODIFIER_LO_EXT,
+    EGL_DMA_BUF_PLANE3_MODIFIER_LO_EXT,
+];
+const EGL_DMA_BUF_PLANE_MODIFIER_HI_ATTRIBUTES: [i32; 4] = [
+    EGL_DMA_BUF_PLANE0_MODIFIER_HI_EXT,
+    EGL_DMA_BUF_PLANE1_MODIFIER_HI_EXT,
+    EGL_DMA_BUF_PLANE2_MODIFIER_HI_EXT,
+    EGL_DMA_BUF_PLANE3_MODIFIER_HI_EXT,
+];
 const COPY_FENCE_TIMEOUT_NS: u64 = 16_000_000;
 const TEXTURE_SLOT_COUNT: usize = 3;
 
@@ -529,18 +577,55 @@ unsafe fn copy_dma_buf_locked(state: &mut GlState, frame: &DmaBufFrame) -> i32 {
         return -32;
     }
 
+    let frame_width = frame.visible_width.max(0) as u32;
+    let frame_height = frame.visible_height.max(0) as u32;
+    let mut preparation_status = 0;
+    if frame_width == 0 || frame_height == 0 {
+        preparation_status = -33;
+    } else if state.allocated_width != frame_width || state.allocated_height != frame_height {
+        for name in state.names {
+            unsafe {
+                epoxy_glBindTexture(GL_TEXTURE_2D, name);
+                epoxy_glTexImage2D(
+                    GL_TEXTURE_2D,
+                    0,
+                    GL_RGBA8,
+                    frame_width as i32,
+                    frame_height as i32,
+                    0,
+                    GL_RGBA,
+                    GL_UNSIGNED_BYTE,
+                    ptr::null(),
+                );
+            }
+        }
+        if unsafe { epoxy_glGetError() } != GL_NO_ERROR {
+            preparation_status = -34;
+        } else {
+            state.published_slot = 0;
+            state.allocated_width = frame_width;
+            state.allocated_height = frame_height;
+            state.uploaded_generation = 0;
+            state.imported_dma_buf_generation = 0;
+        }
+    }
+
     let destination_slot = (state.published_slot + 1) % TEXTURE_SLOT_COUNT;
     let destination_name = state.names[destination_slot];
     let started = Instant::now();
     let mut fence_fallback = false;
-    let status = unsafe {
-        copy_dma_buf_to_texture(
-            frame,
-            destination_name,
-            state.allocated_width,
-            state.allocated_height,
-            &mut fence_fallback,
-        )
+    let status = if preparation_status != 0 {
+        preparation_status
+    } else {
+        unsafe {
+            copy_dma_buf_to_texture(
+                frame,
+                destination_name,
+                state.allocated_width,
+                state.allocated_height,
+                &mut fence_fallback,
+            )
+        }
     };
     let copy_micros = started.elapsed().as_micros().min(u128::from(u64::MAX)) as u64;
     if status == 0 {
@@ -590,17 +675,21 @@ unsafe fn copy_dma_buf_to_texture(
     let drm_format = match frame.format {
         0 => DRM_FORMAT_ABGR8888,
         1 => DRM_FORMAT_ARGB8888,
-        _ => 0,
+        format => format,
     };
-    if frame.plane_count != 1
-        || frame.fds[0] < 0
+    let plane_count = frame.plane_count as usize;
+    if !(1..=frame.fds.len()).contains(&plane_count)
         || drm_format == 0
         || frame.coded_width <= 0
         || frame.coded_height <= 0
         || frame.visible_width <= 0
         || frame.visible_height <= 0
-        || frame.offsets[0] > i32::MAX as u64
-        || frame.strides[0] > i32::MAX as u32
+        || (0..plane_count).any(|plane| {
+            frame.fds[plane] < 0
+                || frame.offsets[plane] > i32::MAX as u64
+                || frame.strides[plane] == 0
+                || frame.strides[plane] > i32::MAX as u32
+        })
     {
         return -11;
     }
@@ -617,22 +706,27 @@ unsafe fn copy_dma_buf_to_texture(
         frame.coded_height,
         EGL_LINUX_DRM_FOURCC_EXT,
         drm_format as i32,
-        EGL_DMA_BUF_PLANE0_FD_EXT,
-        frame.fds[0],
-        EGL_DMA_BUF_PLANE0_OFFSET_EXT,
-        frame.offsets[0] as i32,
-        EGL_DMA_BUF_PLANE0_PITCH_EXT,
-        frame.strides[0] as i32,
     ];
-    if unsafe {
+    let supports_modifiers = unsafe {
         epoxy_has_egl_extension(display, c"EGL_EXT_image_dma_buf_import_modifiers".as_ptr())
-    } {
+    };
+    for plane in 0..plane_count {
         attributes.extend_from_slice(&[
-            EGL_DMA_BUF_PLANE0_MODIFIER_LO_EXT,
-            frame.modifier as u32 as i32,
-            EGL_DMA_BUF_PLANE0_MODIFIER_HI_EXT,
-            (frame.modifier >> 32) as u32 as i32,
+            EGL_DMA_BUF_PLANE_FD_ATTRIBUTES[plane],
+            frame.fds[plane],
+            EGL_DMA_BUF_PLANE_OFFSET_ATTRIBUTES[plane],
+            frame.offsets[plane] as i32,
+            EGL_DMA_BUF_PLANE_PITCH_ATTRIBUTES[plane],
+            frame.strides[plane] as i32,
         ]);
+        if supports_modifiers {
+            attributes.extend_from_slice(&[
+                EGL_DMA_BUF_PLANE_MODIFIER_LO_ATTRIBUTES[plane],
+                frame.modifier as u32 as i32,
+                EGL_DMA_BUF_PLANE_MODIFIER_HI_ATTRIBUTES[plane],
+                (frame.modifier >> 32) as u32 as i32,
+            ]);
+        }
     }
     attributes.push(EGL_NONE);
     let image = unsafe {

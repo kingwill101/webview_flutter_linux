@@ -64,31 +64,45 @@ set(CEF_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/cef")
 set(RUST_CRATE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../rust")
 set(CEF_CARGO_RUNTIME_DIR "${RUST_CRATE_DIR}/target/release")
 set(CEF_HELPER "${CEF_CARGO_RUNTIME_DIR}/cef_texture_browser_helper")
+set(TEXTURE_BROWSER_BACKEND_FILE
+  "${CMAKE_CURRENT_SOURCE_DIR}/../tool/browser_backend")
+if(NOT EXISTS "${TEXTURE_BROWSER_BACKEND_FILE}")
+  message(FATAL_ERROR
+    "Missing browser backend selector: ${TEXTURE_BROWSER_BACKEND_FILE}")
+endif()
+file(READ "${TEXTURE_BROWSER_BACKEND_FILE}" TEXTURE_BROWSER_BACKEND)
+string(STRIP "${TEXTURE_BROWSER_BACKEND}" TEXTURE_BROWSER_BACKEND)
 
-if(NOT EXISTS "${CEF_SOURCE_DIR}/archive.json")
+if(TEXTURE_BROWSER_BACKEND STREQUAL "cef" AND
+   NOT EXISTS "${CEF_SOURCE_DIR}/archive.json")
   message(FATAL_ERROR
     "CEF is not installed at ${CEF_SOURCE_DIR}. See README.md for setup.")
 endif()
 
-find_program(RUSTUP_EXECUTABLE rustup REQUIRED)
-add_custom_command(
-  OUTPUT "${CEF_HELPER}"
-  COMMAND "${CMAKE_COMMAND}" -E env "CEF_PATH=${CEF_SOURCE_DIR}"
-    "${RUSTUP_EXECUTABLE}" run 1.95.0 cargo build
-    --manifest-path "${RUST_CRATE_DIR}/Cargo.toml"
-    --release
-    --features cef-runtime
-    --bin cef_texture_browser_helper
-  DEPENDS
-    "${RUST_CRATE_DIR}/Cargo.toml"
-    "${RUST_CRATE_DIR}/Cargo.lock"
-    "${RUST_CRATE_DIR}/src/bin/cef_texture_browser_helper.rs"
-  WORKING_DIRECTORY "${RUST_CRATE_DIR}"
-  COMMENT "Building the CEF subprocess helper"
-  VERBATIM
-)
-add_custom_target(cef_texture_browser_helper ALL DEPENDS "${CEF_HELPER}")
-add_dependencies(${BINARY_NAME} cef_texture_browser_helper)
+if(TEXTURE_BROWSER_BACKEND STREQUAL "cef")
+  find_program(RUSTUP_EXECUTABLE rustup REQUIRED)
+  add_custom_command(
+    OUTPUT "${CEF_HELPER}"
+    COMMAND "${CMAKE_COMMAND}" -E env "CEF_PATH=${CEF_SOURCE_DIR}"
+      "${RUSTUP_EXECUTABLE}" run 1.95.0 cargo build
+      --manifest-path "${RUST_CRATE_DIR}/Cargo.toml"
+      --release
+      --features cef-runtime
+      --bin cef_texture_browser_helper
+    DEPENDS
+      "${RUST_CRATE_DIR}/Cargo.toml"
+      "${RUST_CRATE_DIR}/Cargo.lock"
+      "${RUST_CRATE_DIR}/src/bin/cef_texture_browser_helper.rs"
+    WORKING_DIRECTORY "${RUST_CRATE_DIR}"
+    COMMENT "Building the CEF subprocess helper"
+    VERBATIM
+  )
+  add_custom_target(cef_texture_browser_helper ALL DEPENDS "${CEF_HELPER}")
+  add_dependencies(${BINARY_NAME} cef_texture_browser_helper)
+elseif(NOT TEXTURE_BROWSER_BACKEND STREQUAL "wpe")
+  message(FATAL_ERROR
+    "Unsupported TEXTURE_BROWSER_BACKEND=${TEXTURE_BROWSER_BACKEND}; expected cef or wpe.")
+endif()
 
 # Run the Flutter tool portions of the build. This must not be removed.
 add_dependencies(${BINARY_NAME} flutter_assemble)
@@ -156,30 +170,32 @@ install(DIRECTORY "${NATIVE_ASSETS_DIR}"
    DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
    COMPONENT Runtime)
 
-install(PROGRAMS "${CEF_HELPER}"
-  DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
-  COMPONENT Runtime)
-
-set(CEF_RUNTIME_FILES
-  chrome_100_percent.pak
-  chrome_200_percent.pak
-  icudtl.dat
-  libEGL.so
-  libGLESv2.so
-  libvk_swiftshader.so
-  libvulkan.so.1
-  resources.pak
-  v8_context_snapshot.bin
-  vk_swiftshader_icd.json
-)
-foreach(cef_runtime_file ${CEF_RUNTIME_FILES})
-  install(FILES "${CEF_CARGO_RUNTIME_DIR}/${cef_runtime_file}"
+if(TEXTURE_BROWSER_BACKEND STREQUAL "cef")
+  install(PROGRAMS "${CEF_HELPER}"
     DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
     COMPONENT Runtime)
-endforeach()
-install(DIRECTORY "${CEF_CARGO_RUNTIME_DIR}/locales/"
-  DESTINATION "${INSTALL_BUNDLE_LIB_DIR}/locales"
-  COMPONENT Runtime)
+
+  set(CEF_RUNTIME_FILES
+    chrome_100_percent.pak
+    chrome_200_percent.pak
+    icudtl.dat
+    libEGL.so
+    libGLESv2.so
+    libvk_swiftshader.so
+    libvulkan.so.1
+    resources.pak
+    v8_context_snapshot.bin
+    vk_swiftshader_icd.json
+  )
+  foreach(cef_runtime_file ${CEF_RUNTIME_FILES})
+    install(FILES "${CEF_CARGO_RUNTIME_DIR}/${cef_runtime_file}"
+      DESTINATION "${INSTALL_BUNDLE_LIB_DIR}"
+      COMPONENT Runtime)
+  endforeach()
+  install(DIRECTORY "${CEF_CARGO_RUNTIME_DIR}/locales/"
+    DESTINATION "${INSTALL_BUNDLE_LIB_DIR}/locales"
+    COMPONENT Runtime)
+endif()
 
 # Fully re-copy the assets directory on each build to avoid having stale files
 # from a previous install.

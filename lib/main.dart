@@ -30,19 +30,19 @@ class ProbeApp extends StatelessWidget {
   const ProbeApp({
     super.key,
     this.animate = true,
-    this.enableCef = true,
+    this.enableBrowser = true,
     this.renderer,
   });
 
   final bool animate;
-  final bool enableCef;
+  final bool enableBrowser;
   final NativeFrameRenderer? renderer;
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'CEF Texture Browser',
+      title: 'Browser Texture Experiment',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
           seedColor: const Color(0xff695de9),
@@ -52,7 +52,7 @@ class ProbeApp extends StatelessWidget {
       ),
       home: ProbePage(
         animate: animate,
-        enableCef: enableCef,
+        enableBrowser: enableBrowser,
         renderer: renderer,
       ),
     );
@@ -63,12 +63,12 @@ class ProbePage extends StatefulWidget {
   const ProbePage({
     super.key,
     required this.animate,
-    required this.enableCef,
+    required this.enableBrowser,
     this.renderer,
   });
 
   final bool animate;
-  final bool enableCef;
+  final bool enableBrowser;
   final NativeFrameRenderer? renderer;
 
   @override
@@ -77,7 +77,8 @@ class ProbePage extends StatefulWidget {
 
 class _ProbePageState extends State<ProbePage> with WidgetsBindingObserver {
   final _addressController = TextEditingController(text: 'https://example.com');
-  final _surfaceFocusNode = FocusNode(debugLabel: 'CEF browser surface');
+  final _surfaceFocusNode = FocusNode(debugLabel: 'native browser surface');
+  final _surfaceAnchorKey = GlobalKey();
   NativeFrameRenderer? _renderer;
   Timer? _frameTimer;
   ui.Image? _image;
@@ -91,6 +92,7 @@ class _ProbePageState extends State<ProbePage> with WidgetsBindingObserver {
   Size? _requestedSurfaceSize;
   double? _requestedDeviceScaleFactor;
   bool _resizeScheduled = false;
+  bool _contextMenuOpen = false;
 
   @override
   void initState() {
@@ -98,7 +100,8 @@ class _ProbePageState extends State<ProbePage> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     try {
       _renderer =
-          widget.renderer ?? NativeFrameRenderer(enableCef: widget.enableCef);
+          widget.renderer ??
+          NativeFrameRenderer(enableBrowser: widget.enableBrowser);
       Timer.run(() {
         if (!mounted) return;
         _renderNextFrame();
@@ -116,6 +119,10 @@ class _ProbePageState extends State<ProbePage> with WidgetsBindingObserver {
     _frameInFlight = true;
     try {
       final nextImage = await renderer.render(_frameNumber++);
+      final contextMenu = renderer.takeContextMenu();
+      if (contextMenu != null) {
+        unawaited(_showBrowserContextMenu(contextMenu));
+      }
       final acceleratedPaintCount = renderer.acceleratedPaintCount;
       if (nextImage == null) {
         if (mounted && acceleratedPaintCount != _lastAcceleratedPaintCount) {
@@ -196,7 +203,7 @@ class _ProbePageState extends State<ProbePage> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     final renderer = _renderer;
     return Scaffold(
-      appBar: AppBar(title: const Text('CEF Texture Browser')),
+      appBar: AppBar(title: const Text('Browser Texture Experiment')),
       body: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(
@@ -225,14 +232,16 @@ class _ProbePageState extends State<ProbePage> with WidgetsBindingObserver {
                               'GL · ${_pixelScaleLabel(renderer)}'
                         : '${renderer.width}×${renderer.height} RGBA',
                   ),
-                if (renderer?.cefEnabled ?? false)
+                if (renderer?.browserEnabled ?? false)
                   _StatusChip(
                     icon: Icons.language,
                     label: renderer!.acceleratedProbe
                         ? _acceleratedProbeLabel(renderer)
                         : renderer.cefFrameReady
-                        ? 'CEF CPU OSR · frame ${renderer.cefFrameGeneration}'
-                        : 'CEF CPU OSR · waiting for first paint',
+                        ? '${renderer.browserEngineLabel} CPU OSR · '
+                              'frame ${renderer.cefFrameGeneration}'
+                        : '${renderer.browserEngineLabel} CPU OSR · '
+                              'waiting for first paint',
                   ),
                 if ((renderer?.acceleratedProbe ?? false) &&
                     renderer!.acceleratedPaintCount > 0)
@@ -275,7 +284,9 @@ class _ProbePageState extends State<ProbePage> with WidgetsBindingObserver {
                 const SizedBox(width: 10),
                 FilledButton.icon(
                   key: const ValueKey('navigate-button'),
-                  onPressed: renderer?.cefEnabled ?? false ? _navigate : null,
+                  onPressed: renderer?.browserEnabled ?? false
+                      ? _navigate
+                      : null,
                   icon: const Icon(Icons.arrow_forward),
                   label: const Text('Go'),
                 ),
@@ -306,13 +317,15 @@ class _ProbePageState extends State<ProbePage> with WidgetsBindingObserver {
             Text(
               renderer?.acceleratedProbe ?? false
                   ? 'Accelerated probe mode displays an Irondash-managed '
-                        'FlTextureGL surface. Valid CEF DMA-BUF frames are '
+                        'FlTextureGL surface. Valid '
+                        '${renderer!.browserEngineLabel} DMA-BUF frames are '
                         'imported through EGL and copied into the Flutter-owned '
                         'texture without a CPU pixel readback.'
                   : 'This frame is generated in Rust, written directly into '
                         'FFI memory owned by Dart, and uploaded as a Flutter '
                         'image. The procedural frame remains visible only '
-                        'until CEF delivers its first off-screen paint callback.',
+                        'until the browser delivers its first off-screen paint '
+                        'callback.',
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
               ),
@@ -325,19 +338,29 @@ class _ProbePageState extends State<ProbePage> with WidgetsBindingObserver {
 
   String _acceleratedProbeLabel(NativeFrameRenderer renderer) {
     final paints = renderer.acceleratedPaintCount;
-    if (paints == 0) return 'CEF DMA-BUF probe · waiting';
+    if (paints == 0) {
+      return '${renderer.browserEngineLabel} DMA-BUF probe · waiting';
+    }
     final valid = renderer.acceleratedValidPaintCount;
-    return 'CEF DMA-BUF · $valid/$paints valid · '
+    return '${renderer.browserEngineLabel} DMA-BUF · $valid/$paints valid · '
         '${renderer.acceleratedCodedWidth}×${renderer.acceleratedCodedHeight} · '
         '${renderer.acceleratedPlaneCount} plane(s)';
   }
 
   String _acceleratedMetadataLabel(NativeFrameRenderer renderer) {
-    final format = switch (renderer.acceleratedFormat) {
-      0 => 'RGBA8888',
-      1 => 'BGRA8888',
-      final value => 'format $value',
-    };
+    final value = renderer.acceleratedFormat;
+    final format = renderer.browserEngine == BrowserEngine.wpe
+        ? String.fromCharCodes([
+            value & 0xff,
+            (value >> 8) & 0xff,
+            (value >> 16) & 0xff,
+            (value >> 24) & 0xff,
+          ])
+        : switch (value) {
+            0 => 'RGBA8888',
+            1 => 'BGRA8888',
+            _ => 'format $value',
+          };
     return '$format · mod '
         '0x${renderer.acceleratedModifier.toRadixString(16)} · '
         '${renderer.acceleratedFirstPlaneStride} B/row';
@@ -395,43 +418,100 @@ class _ProbePageState extends State<ProbePage> with WidgetsBindingObserver {
       builder: (context, constraints) {
         final size = Size(constraints.maxWidth, constraints.maxHeight);
         _scheduleSurfaceResize(size, MediaQuery.devicePixelRatioOf(context));
-        return Focus(
-          focusNode: _surfaceFocusNode,
-          onFocusChange: (focused) {
-            _runCefAction(() => _renderer?.setFocus(focused));
-          },
-          onKeyEvent: _handleKeyEvent,
-          child: MouseRegion(
-            cursor: SystemMouseCursors.basic,
-            onExit: _handlePointerExit,
-            child: Listener(
-              key: const ValueKey('browser-surface'),
-              behavior: HitTestBehavior.opaque,
-              onPointerDown: _handlePointerDown,
-              onPointerUp: _handlePointerUp,
-              onPointerCancel: _handlePointerCancel,
-              onPointerMove: _handlePointerMove,
-              onPointerHover: _handlePointerMove,
-              onPointerSignal: _handlePointerSignal,
-              child:
-                  (_renderer?.acceleratedProbe ?? false) &&
-                      (_renderer?.textureId ?? 0) > 0
-                  ? Texture(
-                      textureId: _renderer!.textureId,
-                      filterQuality: FilterQuality.none,
-                    )
-                  : _image != null
-                  ? RawImage(
-                      image: _image,
-                      fit: BoxFit.fill,
-                      filterQuality: FilterQuality.none,
-                    )
-                  : const Center(child: CircularProgressIndicator()),
+        return KeyedSubtree(
+          key: _surfaceAnchorKey,
+          child: Focus(
+            focusNode: _surfaceFocusNode,
+            onFocusChange: (focused) {
+              _runCefAction(() => _renderer?.setFocus(focused));
+            },
+            onKeyEvent: _handleKeyEvent,
+            child: MouseRegion(
+              cursor: SystemMouseCursors.basic,
+              onExit: _handlePointerExit,
+              child: Listener(
+                key: const ValueKey('browser-surface'),
+                behavior: HitTestBehavior.opaque,
+                onPointerDown: _handlePointerDown,
+                onPointerUp: _handlePointerUp,
+                onPointerCancel: _handlePointerCancel,
+                onPointerMove: _handlePointerMove,
+                onPointerHover: _handlePointerMove,
+                onPointerSignal: _handlePointerSignal,
+                child:
+                    (_renderer?.acceleratedProbe ?? false) &&
+                        (_renderer?.textureId ?? 0) > 0
+                    ? Texture(
+                        textureId: _renderer!.textureId,
+                        filterQuality: FilterQuality.none,
+                      )
+                    : _image != null
+                    ? RawImage(
+                        image: _image,
+                        fit: BoxFit.fill,
+                        filterQuality: FilterQuality.none,
+                      )
+                    : const Center(child: CircularProgressIndicator()),
+              ),
             ),
           ),
         );
       },
     );
+  }
+
+  Future<void> _showBrowserContextMenu(NativeBrowserContextMenu menu) async {
+    if (_contextMenuOpen || !mounted || menu.items.isEmpty) {
+      _renderer?.dismissContextMenu();
+      return;
+    }
+    final surfaceBox =
+        _surfaceAnchorKey.currentContext?.findRenderObject() as RenderBox?;
+    final overlayBox =
+        Overlay.of(context).context.findRenderObject() as RenderBox?;
+    if (surfaceBox == null || overlayBox == null) {
+      _renderer?.dismissContextMenu();
+      return;
+    }
+    _contextMenuOpen = true;
+    final globalPosition = surfaceBox.localToGlobal(menu.position);
+    final overlayPosition = overlayBox.globalToLocal(globalPosition);
+    final entries = <PopupMenuEntry<int>>[];
+    for (final item in menu.items) {
+      if (item.isSeparator) {
+        entries.add(const PopupMenuDivider());
+      } else if (item.title.isNotEmpty) {
+        entries.add(
+          PopupMenuItem<int>(
+            value: item.index,
+            enabled: item.isEnabled,
+            child: Text(item.title),
+          ),
+        );
+      }
+    }
+    if (entries.isEmpty) {
+      _contextMenuOpen = false;
+      _renderer?.dismissContextMenu();
+      return;
+    }
+    final selected = await showMenu<int>(
+      context: context,
+      position: RelativeRect.fromLTRB(
+        overlayPosition.dx,
+        overlayPosition.dy,
+        (overlayBox.size.width - overlayPosition.dx).clamp(0, double.infinity),
+        (overlayBox.size.height - overlayPosition.dy).clamp(0, double.infinity),
+      ),
+      items: entries,
+    );
+    _contextMenuOpen = false;
+    if (!mounted) return;
+    if (selected == null) {
+      _renderer?.dismissContextMenu();
+    } else {
+      _runCefAction(() => _renderer?.activateContextMenuItem(selected));
+    }
   }
 
   void _scheduleSurfaceResize(Size size, double deviceScaleFactor) {
@@ -501,13 +581,14 @@ class _ProbePageState extends State<ProbePage> with WidgetsBindingObserver {
   void _handlePointerUp(PointerUpEvent event) {
     _lastPointerPosition = event.localPosition;
     final releasedButtons = _pressedButtons & ~event.buttons;
-    _sendChangedButtons(event.localPosition, releasedButtons, mouseUp: true);
     _pressedButtons = event.buttons;
+    _sendChangedButtons(event.localPosition, releasedButtons, mouseUp: true);
   }
 
   void _handlePointerCancel(PointerCancelEvent event) {
-    _sendChangedButtons(_lastPointerPosition, _pressedButtons, mouseUp: true);
+    final releasedButtons = _pressedButtons;
     _pressedButtons = 0;
+    _sendChangedButtons(_lastPointerPosition, releasedButtons, mouseUp: true);
   }
 
   void _sendChangedButtons(
@@ -556,18 +637,28 @@ class _ProbePageState extends State<ProbePage> with WidgetsBindingObserver {
     final eventType = event is KeyUpEvent
         ? cefKeyEventKeyUp
         : cefKeyEventRawKeyDown;
+    final character = event.character;
+    final characterCode = character != null && character.isNotEmpty
+        ? character.runes.first
+        : 0;
     _runCefAction(
       () => _renderer?.sendKey(
         eventType: eventType,
         modifiers: modifiers,
         windowsKeyCode: windowsKeyCode,
         nativeKeyCode: event.physicalKey.usbHidUsage,
+        character: _renderer?.browserEngine == BrowserEngine.wpe
+            ? characterCode
+            : 0,
+        unmodifiedCharacter: _renderer?.browserEngine == BrowserEngine.wpe
+            ? characterCode
+            : 0,
       ),
     );
 
-    final character = event.character;
     final keyboard = HardwareKeyboard.instance;
-    if (event is! KeyUpEvent &&
+    if (_renderer?.browserEngine == BrowserEngine.cef &&
+        event is! KeyUpEvent &&
         character != null &&
         character.isNotEmpty &&
         !keyboard.isControlPressed &&

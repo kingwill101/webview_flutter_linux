@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: UNLICENSED
 
 import 'dart:async';
+import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io';
 import 'dart:typed_data';
@@ -10,15 +11,59 @@ import 'package:ffi/ffi.dart';
 
 import 'native_frame_bindings.dart';
 
+enum BrowserEngine { cef, wpe }
+
+String _displayContextMenuTitle(String title) {
+  return title.replaceAllMapped(
+    RegExp(r'_(.)'),
+    (match) => match.group(1) ?? '',
+  );
+}
+
+final class BrowserContextMenuItem {
+  const BrowserContextMenuItem({
+    required this.index,
+    required this.title,
+    required this.isSeparator,
+    required this.isEnabled,
+  });
+
+  final int index;
+  final String title;
+  final bool isSeparator;
+  final bool isEnabled;
+}
+
+final class NativeBrowserContextMenu {
+  const NativeBrowserContextMenu({required this.position, required this.items});
+
+  final ui.Offset position;
+  final List<BrowserContextMenuItem> items;
+}
+
+BrowserEngine _configuredBrowserEngine() {
+  return switch (cefTextureBrowserBrowserBackend()) {
+    1 => BrowserEngine.cef,
+    2 => BrowserEngine.wpe,
+    final value => throw StateError('Unknown native browser backend $value.'),
+  };
+}
+
 final class NativeFrameRenderer {
   NativeFrameRenderer({
     int? engineHandle,
-    bool enableCef = true,
+    bool enableBrowser = true,
     String initialUrl = 'https://example.com',
     bool? acceleratedProbe,
-  }) : acceleratedProbe =
-           acceleratedProbe ??
-           Platform.environment['CEF_TEXTURE_BROWSER_ACCELERATED_PROBE'] == '1',
+    BrowserEngine? browserEngine,
+  }) : browserEngine = browserEngine ?? _configuredBrowserEngine(),
+       acceleratedProbe =
+           enableBrowser &&
+           ((browserEngine ?? _configuredBrowserEngine()) ==
+                   BrowserEngine.wpe ||
+               acceleratedProbe == true ||
+               Platform.environment['CEF_TEXTURE_BROWSER_ACCELERATED_PROBE'] ==
+                   '1'),
        apiVersion = cefTextureBrowserApiVersion(),
        _width = cefTextureBrowserFrameWidth(),
        _height = cefTextureBrowserFrameHeight(),
@@ -48,20 +93,27 @@ final class NativeFrameRenderer {
         }
       }
 
-      if (enableCef) {
-        final executableDirectory = File(Platform.resolvedExecutable).parent;
-        final runtimeDirectory = Directory(
-          '${executableDirectory.path}${Platform.pathSeparator}lib',
-        );
-        final reusedRuntime = _initializeCef(runtimeDirectory.path, initialUrl);
-        cefEnabled = true;
-        setVisibility(true);
-        if (reusedRuntime) {
-          navigate(initialUrl);
+      if (enableBrowser) {
+        if (this.browserEngine == BrowserEngine.wpe) {
+          _initializeWpe(initialUrl);
+        } else {
+          final executableDirectory = File(Platform.resolvedExecutable).parent;
+          final runtimeDirectory = Directory(
+            '${executableDirectory.path}${Platform.pathSeparator}lib',
+          );
+          final reusedRuntime = _initializeCef(
+            runtimeDirectory.path,
+            initialUrl,
+          );
+          if (reusedRuntime) {
+            navigate(initialUrl);
+          }
         }
+        browserEnabled = true;
+        setVisibility(true);
       }
     } catch (_) {
-      if (enableCef || this.acceleratedProbe) {
+      if (enableBrowser || this.acceleratedProbe) {
         cefTextureBrowserNativeShutdown();
       }
       calloc.free(_destination);
@@ -71,6 +123,7 @@ final class NativeFrameRenderer {
   }
 
   final int apiVersion;
+  final BrowserEngine browserEngine;
   final bool acceleratedProbe;
   int _width;
   int _height;
@@ -81,12 +134,13 @@ final class NativeFrameRenderer {
   int? _logicalWidth;
   int? _logicalHeight;
   double? _deviceScaleFactor;
-  bool cefEnabled = false;
+  bool browserEnabled = false;
   bool cefFrameReady = false;
   int cefFrameGeneration = 0;
   bool _proceduralFrameRendered = false;
   int _requestedTextureGeneration = -1;
   int _requestedAcceleratedPaintCount = -1;
+  int _lastContextMenuGeneration = 0;
   bool _disposed = false;
 
   int get width => _width;
@@ -111,35 +165,59 @@ final class NativeFrameRenderer {
       cefTextureBrowserFlutterTextureDmaBufMaxCopyMicros();
   int get textureDmaBufFenceFallbackCount =>
       cefTextureBrowserFlutterTextureDmaBufFenceFallbackCount();
-  int get acceleratedPaintCount => cefTextureBrowserCefAcceleratedPaintCount();
-  int get acceleratedValidPaintCount =>
-      cefTextureBrowserCefAcceleratedValidPaintCount();
-  int get acceleratedPlaneCount => cefTextureBrowserCefAcceleratedPlaneCount();
-  int get acceleratedFormat => cefTextureBrowserCefAcceleratedFormat();
-  int get acceleratedModifier => cefTextureBrowserCefAcceleratedModifier();
-  int get acceleratedCodedWidth => cefTextureBrowserCefAcceleratedCodedWidth();
-  int get acceleratedCodedHeight =>
-      cefTextureBrowserCefAcceleratedCodedHeight();
-  int get acceleratedVisibleWidth =>
-      cefTextureBrowserCefAcceleratedVisibleWidth();
-  int get acceleratedVisibleHeight =>
-      cefTextureBrowserCefAcceleratedVisibleHeight();
-  int get acceleratedFirstPlaneStride =>
-      cefTextureBrowserCefAcceleratedFirstPlaneStride();
-  int get dmaBufCallbackGeneration => cefTextureBrowserCefDmaBufGeneration();
+  String get browserEngineLabel => switch (browserEngine) {
+    BrowserEngine.cef => 'CEF',
+    BrowserEngine.wpe => 'WPE WebKit',
+  };
+  int get acceleratedPaintCount => browserEngine == BrowserEngine.wpe
+      ? cefTextureBrowserWpePaintCount()
+      : cefTextureBrowserCefAcceleratedPaintCount();
+  int get acceleratedValidPaintCount => browserEngine == BrowserEngine.wpe
+      ? cefTextureBrowserWpeValidPaintCount()
+      : cefTextureBrowserCefAcceleratedValidPaintCount();
+  int get acceleratedPlaneCount => browserEngine == BrowserEngine.wpe
+      ? cefTextureBrowserWpePlaneCount()
+      : cefTextureBrowserCefAcceleratedPlaneCount();
+  int get acceleratedFormat => browserEngine == BrowserEngine.wpe
+      ? cefTextureBrowserWpeFormat()
+      : cefTextureBrowserCefAcceleratedFormat();
+  int get acceleratedModifier => browserEngine == BrowserEngine.wpe
+      ? cefTextureBrowserWpeModifier()
+      : cefTextureBrowserCefAcceleratedModifier();
+  int get acceleratedCodedWidth => browserEngine == BrowserEngine.wpe
+      ? cefTextureBrowserWpeWidth()
+      : cefTextureBrowserCefAcceleratedCodedWidth();
+  int get acceleratedCodedHeight => browserEngine == BrowserEngine.wpe
+      ? cefTextureBrowserWpeHeight()
+      : cefTextureBrowserCefAcceleratedCodedHeight();
+  int get acceleratedVisibleWidth => acceleratedCodedWidth;
+  int get acceleratedVisibleHeight => acceleratedCodedHeight;
+  int get acceleratedFirstPlaneStride => browserEngine == BrowserEngine.wpe
+      ? cefTextureBrowserWpeFirstPlaneStride()
+      : cefTextureBrowserCefAcceleratedFirstPlaneStride();
+  int get dmaBufCallbackGeneration => browserEngine == BrowserEngine.wpe
+      ? cefTextureBrowserWpeFrameGeneration()
+      : cefTextureBrowserCefDmaBufGeneration();
 
   Future<ui.Image?> render(int frameNumber) {
     if (_disposed) {
       throw StateError('NativeFrameRenderer has been disposed.');
     }
 
-    if (cefEnabled) {
-      final pumpStatus = cefTextureBrowserCefPump();
+    if (browserEnabled) {
+      final pumpStatus = browserEngine == BrowserEngine.wpe
+          ? cefTextureBrowserWpePump()
+          : cefTextureBrowserCefPump();
       if (pumpStatus != 0) {
-        throw StateError('CEF message pump failed with status $pumpStatus.');
+        throw StateError(
+          '$browserEngineLabel message pump failed with status $pumpStatus.',
+        );
       }
       if (acceleratedProbe) {
         _requestTextureFrameIfNeeded();
+      }
+      if (browserEngine == BrowserEngine.wpe) {
+        return Future.value(null);
       }
       final generation = cefTextureBrowserCefFrameGeneration();
       if (generation > cefFrameGeneration) {
@@ -199,12 +277,16 @@ final class NativeFrameRenderer {
   }
 
   void navigate(String url) {
-    if (!cefEnabled) return;
+    if (!browserEnabled) return;
     final nativeUrl = url.toNativeUtf8();
     try {
-      final status = cefTextureBrowserCefNavigate(nativeUrl.cast());
+      final status = browserEngine == BrowserEngine.wpe
+          ? cefTextureBrowserWpeNavigate(nativeUrl.cast())
+          : cefTextureBrowserCefNavigate(nativeUrl.cast());
       if (status != 0) {
-        throw StateError('CEF navigation failed with status $status.');
+        throw StateError(
+          '$browserEngineLabel navigation failed with status $status.',
+        );
       }
     } finally {
       calloc.free(nativeUrl);
@@ -216,7 +298,7 @@ final class NativeFrameRenderer {
     required double logicalHeight,
     required double deviceScaleFactor,
   }) {
-    if (!cefEnabled || _disposed) return;
+    if (!browserEnabled || _disposed) return;
     final width = logicalWidth.ceil().clamp(1, 8192);
     final height = logicalHeight.ceil().clamp(1, 8192);
     final scale = deviceScaleFactor.clamp(0.5, 4.0).toDouble();
@@ -225,16 +307,20 @@ final class NativeFrameRenderer {
         _deviceScaleFactor == scale) {
       return;
     }
-    final status = cefTextureBrowserCefResize(width, height, scale);
+    final physicalWidth = (width * scale).ceil().clamp(1, 16384);
+    final physicalHeight = (height * scale).ceil().clamp(1, 16384);
+    final status = browserEngine == BrowserEngine.wpe
+        ? cefTextureBrowserWpeResize(physicalWidth, physicalHeight)
+        : cefTextureBrowserCefResize(width, height, scale);
     if (status != 0) {
-      throw StateError('CEF surface resize failed with status $status.');
+      throw StateError(
+        '$browserEngineLabel surface resize failed with status $status.',
+      );
     }
     _logicalWidth = width;
     _logicalHeight = height;
     _deviceScaleFactor = scale;
-    if (acceleratedProbe) {
-      final physicalWidth = (width * scale).ceil().clamp(1, 16384);
-      final physicalHeight = (height * scale).ceil().clamp(1, 16384);
+    if (acceleratedProbe && browserEngine == BrowserEngine.cef) {
       final textureStatus = cefTextureBrowserFlutterTextureResize(
         physicalWidth,
         physicalHeight,
@@ -266,13 +352,20 @@ final class NativeFrameRenderer {
   }
 
   void setFocus(bool focused) {
-    _checkInputStatus('focus', cefTextureBrowserCefSetFocus(focused ? 1 : 0));
+    _checkInputStatus(
+      'focus',
+      browserEngine == BrowserEngine.wpe
+          ? cefTextureBrowserWpeSetFocus(focused ? 1 : 0)
+          : cefTextureBrowserCefSetFocus(focused ? 1 : 0),
+    );
   }
 
   void setVisibility(bool visible) {
     _checkInputStatus(
       'visibility',
-      cefTextureBrowserCefSetVisibility(visible ? 1 : 0),
+      browserEngine == BrowserEngine.wpe
+          ? cefTextureBrowserWpeSetVisibility(visible ? 1 : 0)
+          : cefTextureBrowserCefSetVisibility(visible ? 1 : 0),
     );
   }
 
@@ -284,7 +377,19 @@ final class NativeFrameRenderer {
   }) {
     _checkInputStatus(
       'mouse move',
-      cefTextureBrowserCefSendMouseMove(x, y, modifiers, mouseLeave ? 1 : 0),
+      browserEngine == BrowserEngine.wpe
+          ? cefTextureBrowserWpeSendMouseMove(
+              _physicalInputCoordinate(x),
+              _physicalInputCoordinate(y),
+              modifiers,
+              mouseLeave ? 1 : 0,
+            )
+          : cefTextureBrowserCefSendMouseMove(
+              x,
+              y,
+              modifiers,
+              mouseLeave ? 1 : 0,
+            ),
     );
   }
 
@@ -298,14 +403,23 @@ final class NativeFrameRenderer {
   }) {
     _checkInputStatus(
       'mouse button',
-      cefTextureBrowserCefSendMouseButton(
-        x,
-        y,
-        modifiers,
-        button,
-        mouseUp ? 1 : 0,
-        clickCount,
-      ),
+      browserEngine == BrowserEngine.wpe
+          ? cefTextureBrowserWpeSendMouseButton(
+              _physicalInputCoordinate(x),
+              _physicalInputCoordinate(y),
+              modifiers,
+              button,
+              mouseUp ? 1 : 0,
+              clickCount,
+            )
+          : cefTextureBrowserCefSendMouseButton(
+              x,
+              y,
+              modifiers,
+              button,
+              mouseUp ? 1 : 0,
+              clickCount,
+            ),
     );
   }
 
@@ -318,7 +432,15 @@ final class NativeFrameRenderer {
   }) {
     _checkInputStatus(
       'mouse wheel',
-      cefTextureBrowserCefSendMouseWheel(x, y, modifiers, deltaX, deltaY),
+      browserEngine == BrowserEngine.wpe
+          ? cefTextureBrowserWpeSendMouseWheel(
+              _physicalInputCoordinate(x),
+              _physicalInputCoordinate(y),
+              modifiers,
+              deltaX,
+              deltaY,
+            )
+          : cefTextureBrowserCefSendMouseWheel(x, y, modifiers, deltaX, deltaY),
     );
   }
 
@@ -332,21 +454,101 @@ final class NativeFrameRenderer {
   }) {
     _checkInputStatus(
       'key',
-      cefTextureBrowserCefSendKey(
-        eventType,
-        modifiers,
-        windowsKeyCode,
-        nativeKeyCode,
-        character,
-        unmodifiedCharacter,
-      ),
+      browserEngine == BrowserEngine.wpe
+          ? cefTextureBrowserWpeSendKey(
+              eventType,
+              modifiers,
+              windowsKeyCode,
+              nativeKeyCode,
+              character,
+              unmodifiedCharacter,
+            )
+          : cefTextureBrowserCefSendKey(
+              eventType,
+              modifiers,
+              windowsKeyCode,
+              nativeKeyCode,
+              character,
+              unmodifiedCharacter,
+            ),
     );
   }
 
-  void _checkInputStatus(String operation, int status) {
-    if (!cefEnabled || _disposed) return;
+  NativeBrowserContextMenu? takeContextMenu() {
+    if (browserEngine != BrowserEngine.wpe || !browserEnabled || _disposed) {
+      return null;
+    }
+    final generation = cefTextureBrowserWpeContextMenuGeneration();
+    if (generation == 0 || generation == _lastContextMenuGeneration) {
+      return null;
+    }
+    _lastContextMenuGeneration = generation;
+    final itemCount = cefTextureBrowserWpeContextMenuItemCount();
+    final items = <BrowserContextMenuItem>[];
+    for (var index = 0; index < itemCount; index += 1) {
+      final length = cefTextureBrowserWpeContextMenuItemTitleLength(index);
+      var title = '';
+      if (length > 0) {
+        final destination = calloc<Uint8>(length);
+        try {
+          final copied = cefTextureBrowserWpeContextMenuItemCopyTitle(
+            index,
+            destination,
+            length,
+          );
+          if (copied > 0) {
+            title = _displayContextMenuTitle(
+              utf8.decode(
+                destination.asTypedList(copied),
+                allowMalformed: true,
+              ),
+            );
+          }
+        } finally {
+          calloc.free(destination);
+        }
+      }
+      items.add(
+        BrowserContextMenuItem(
+          index: index,
+          title: title,
+          isSeparator:
+              cefTextureBrowserWpeContextMenuItemIsSeparator(index) != 0,
+          isEnabled: cefTextureBrowserWpeContextMenuItemIsEnabled(index) != 0,
+        ),
+      );
+    }
+    final scale = _deviceScaleFactor ?? 1.0;
+    return NativeBrowserContextMenu(
+      position: ui.Offset(
+        cefTextureBrowserWpeContextMenuX() / scale,
+        cefTextureBrowserWpeContextMenuY() / scale,
+      ),
+      items: items,
+    );
+  }
+
+  void activateContextMenuItem(int index) {
+    final status = cefTextureBrowserWpeContextMenuActivate(index);
     if (status != 0) {
-      throw StateError('CEF $operation failed with status $status.');
+      throw StateError(
+        '$browserEngineLabel context-menu action failed with status $status.',
+      );
+    }
+  }
+
+  void dismissContextMenu() {
+    if (browserEngine == BrowserEngine.wpe && !_disposed) {
+      cefTextureBrowserWpeContextMenuDismiss();
+    }
+  }
+
+  void _checkInputStatus(String operation, int status) {
+    if (!browserEnabled || _disposed) return;
+    if (status != 0) {
+      throw StateError(
+        '$browserEngineLabel $operation failed with status $status.',
+      );
     }
   }
 
@@ -387,17 +589,44 @@ final class NativeFrameRenderer {
     }
   }
 
+  void _initializeWpe(String initialUrl) {
+    final nativeInitialUrl = initialUrl.toNativeUtf8();
+    try {
+      final status = cefTextureBrowserWpeInitialize(nativeInitialUrl.cast());
+      if (status != 0 && status != 1) {
+        throw StateError('WPE initialization failed with status $status.');
+      }
+      if (status == 1) {
+        final navigationStatus = cefTextureBrowserWpeNavigate(
+          nativeInitialUrl.cast(),
+        );
+        if (navigationStatus != 0) {
+          throw StateError(
+            'WPE navigation failed with status $navigationStatus.',
+          );
+        }
+      }
+    } finally {
+      calloc.free(nativeInitialUrl);
+    }
+  }
+
+  int _physicalInputCoordinate(int logicalCoordinate) {
+    final scale = _deviceScaleFactor ?? 1.0;
+    return (logicalCoordinate * scale).round();
+  }
+
   void dispose() {
     if (_disposed) return;
     _disposed = true;
-    if (cefEnabled || acceleratedProbe) {
+    if (browserEnabled || acceleratedProbe) {
       final shutdownStatus = cefTextureBrowserNativeShutdown();
       if (shutdownStatus < 0) {
         stderr.writeln(
           'Native browser shutdown failed with status $shutdownStatus.',
         );
       }
-      cefEnabled = false;
+      browserEnabled = false;
     }
     calloc.free(_destination);
   }

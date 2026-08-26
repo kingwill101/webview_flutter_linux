@@ -9,6 +9,8 @@ use std::{
 mod cef_runtime;
 #[cfg(target_os = "linux")]
 mod linux_texture;
+#[cfg(all(target_os = "linux", feature = "wpe-runtime"))]
+mod wpe_runtime;
 
 const API_VERSION: u32 = 6;
 const WIDTH: usize = 800;
@@ -34,6 +36,20 @@ pub(crate) static FLUTTER_TEXTURE_DMA_BUF_FENCE_FALLBACK_COUNT: AtomicU64 = Atom
 #[unsafe(no_mangle)]
 pub extern "C" fn cef_texture_browser_api_version() -> u32 {
     API_VERSION
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn cef_texture_browser_browser_backend() -> u32 {
+    #[cfg(feature = "wpe-runtime")]
+    {
+        return 2;
+    }
+    #[cfg(all(not(feature = "wpe-runtime"), feature = "cef-runtime"))]
+    {
+        return 1;
+    }
+    #[allow(unreachable_code)]
+    0
 }
 
 #[unsafe(no_mangle)]
@@ -71,6 +87,11 @@ pub extern "C" fn cef_texture_browser_native_shutdown() -> i32 {
     #[cfg(not(feature = "cef-runtime"))]
     let cef_status = 1;
 
+    #[cfg(all(target_os = "linux", feature = "wpe-runtime"))]
+    let wpe_status = wpe_runtime::cef_texture_browser_wpe_shutdown();
+    #[cfg(not(all(target_os = "linux", feature = "wpe-runtime")))]
+    let wpe_status = 1;
+
     #[cfg(target_os = "linux")]
     let texture_status = linux_texture::shutdown();
     #[cfg(not(target_os = "linux"))]
@@ -78,6 +99,8 @@ pub extern "C" fn cef_texture_browser_native_shutdown() -> i32 {
 
     if cef_status < 0 {
         cef_status
+    } else if wpe_status < 0 {
+        wpe_status
     } else {
         texture_status
     }
@@ -128,7 +151,7 @@ pub extern "C" fn cef_texture_browser_flutter_texture_request_frame() -> i32 {
     }
 }
 
-#[cfg(feature = "cef-runtime")]
+#[cfg(any(feature = "cef-runtime", feature = "wpe-runtime"))]
 pub(crate) fn notify_flutter_texture_frame() -> i32 {
     cef_texture_browser_flutter_texture_request_frame()
 }

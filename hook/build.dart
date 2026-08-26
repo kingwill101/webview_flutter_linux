@@ -10,10 +10,24 @@ void main(List<String> arguments) async {
   await build(arguments, (input, output) async {
     if (!input.config.buildCodeAssets) return;
 
+    final backendConfiguration = File.fromUri(
+      input.packageRoot.resolve('tool/browser_backend'),
+    );
+    output.dependencies.add(backendConfiguration.uri);
+    final backend = backendConfiguration.readAsStringSync().trim();
+    if (backend != 'cef' && backend != 'wpe') {
+      throw StateError(
+        'Unsupported browser backend "$backend" in '
+        '${backendConfiguration.path}; expected cef or wpe.',
+      );
+    }
     final cefDirectory = Directory.fromUri(
       input.packageRoot.resolve('third_party/cef/'),
     );
-    if (!cefDirectory.existsSync()) {
+    final localWpeSdkDirectory = Directory.fromUri(
+      input.packageRoot.resolve('third_party/wpe-sdk/usr/'),
+    );
+    if (backend == 'cef' && !cefDirectory.existsSync()) {
       throw StateError(
         'CEF is not installed at ${cefDirectory.path}. '
         'Run the setup command documented in README.md.',
@@ -28,17 +42,30 @@ void main(List<String> arguments) async {
 
     await RustBuilder(
       assetName: 'src/native_frame_bindings.dart',
-      features: const ['cef-runtime'],
-      extraCargoEnvironmentVariables: {'CEF_PATH': cefDirectory.path},
+      features: [backend == 'wpe' ? 'wpe-runtime' : 'cef-runtime'],
+      extraCargoEnvironmentVariables: switch (backend) {
+        'cef' => {'CEF_PATH': cefDirectory.path},
+        'wpe' when localWpeSdkDirectory.existsSync() => {
+          'PKG_CONFIG_PATH': Directory.fromUri(
+            localWpeSdkDirectory.uri.resolve('lib/pkgconfig/'),
+          ).path,
+          'LIBRARY_PATH': Directory.fromUri(
+            localWpeSdkDirectory.uri.resolve('lib/'),
+          ).path,
+        },
+        _ => const {},
+      },
     ).run(input: input, output: output);
 
-    output.assets.code.add(
-      CodeAsset(
-        package: input.packageName,
-        name: 'src/cef_runtime_asset.dart',
-        linkMode: DynamicLoadingBundled(),
-        file: cefDirectory.uri.resolve('libcef.so'),
-      ),
-    );
+    if (backend == 'cef') {
+      output.assets.code.add(
+        CodeAsset(
+          package: input.packageName,
+          name: 'src/cef_runtime_asset.dart',
+          linkMode: DynamicLoadingBundled(),
+          file: cefDirectory.uri.resolve('libcef.so'),
+        ),
+      );
+    }
   });
 }

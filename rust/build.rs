@@ -10,5 +10,12 @@ fn main() {
         // CEF's Linux runtime files are installed beside the Rust native
         // asset and helper executable.
         println!("cargo::rustc-link-arg=-Wl,-rpath,$ORIGIN");
+
+        if std::env::var_os("CARGO_FEATURE_WPE_RUNTIME").is_some() {
+            pkg_config::Config::new()
+                .atleast_version("2.52")
+                .probe("wpe-webkit-2.0")
+                .expect("wpe-runtime requires the WPE WebKit 2.52 development package");
+        }
     }
 }

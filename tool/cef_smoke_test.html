@@ -106,6 +106,9 @@
       document.querySelector('#button').addEventListener('click', () => {
         status.textContent = 'Button clicked through Flutter';
       });
+      document.addEventListener('contextmenu', () => {
+        status.textContent = 'Context menu requested through Flutter';
+      });
       updateMetrics();
     </script>
   </body>

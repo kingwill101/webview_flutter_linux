@@ -5,6 +5,11 @@ import 'dart:ffi' as ffi;
 @ffi.Native<ffi.Uint32 Function()>(symbol: 'cef_texture_browser_api_version')
 external int cefTextureBrowserApiVersion();
 
+@ffi.Native<ffi.Uint32 Function()>(
+  symbol: 'cef_texture_browser_browser_backend',
+)
+external int cefTextureBrowserBrowserBackend();
+
 @ffi.Native<ffi.Uint32 Function()>(symbol: 'cef_texture_browser_frame_width')
 external int cefTextureBrowserFrameWidth();
 
@@ -293,3 +298,181 @@ external int cefTextureBrowserCefSendKey(
   int character,
   int unmodifiedCharacter,
 );
+
+@ffi.Native<ffi.Int32 Function(ffi.Pointer<ffi.Char>)>(
+  symbol: 'cef_texture_browser_wpe_initialize',
+)
+external int cefTextureBrowserWpeInitialize(ffi.Pointer<ffi.Char> initialUrl);
+
+@ffi.Native<ffi.Int32 Function()>(symbol: 'cef_texture_browser_wpe_pump')
+external int cefTextureBrowserWpePump();
+
+@ffi.Native<ffi.Int32 Function(ffi.Int32)>(
+  symbol: 'cef_texture_browser_wpe_set_focus',
+)
+external int cefTextureBrowserWpeSetFocus(int focused);
+
+@ffi.Native<ffi.Int32 Function(ffi.Pointer<ffi.Char>)>(
+  symbol: 'cef_texture_browser_wpe_navigate',
+)
+external int cefTextureBrowserWpeNavigate(ffi.Pointer<ffi.Char> url);
+
+@ffi.Native<ffi.Int32 Function(ffi.Uint32, ffi.Uint32)>(
+  symbol: 'cef_texture_browser_wpe_resize',
+)
+external int cefTextureBrowserWpeResize(int width, int height);
+
+@ffi.Native<ffi.Int32 Function(ffi.Int32)>(
+  symbol: 'cef_texture_browser_wpe_set_visibility',
+)
+external int cefTextureBrowserWpeSetVisibility(int visible);
+
+@ffi.Native<ffi.Int32 Function(ffi.Int32, ffi.Int32, ffi.Uint32, ffi.Int32)>(
+  symbol: 'cef_texture_browser_wpe_send_mouse_move',
+)
+external int cefTextureBrowserWpeSendMouseMove(
+  int x,
+  int y,
+  int modifiers,
+  int mouseLeave,
+);
+
+@ffi.Native<
+  ffi.Int32 Function(
+    ffi.Int32,
+    ffi.Int32,
+    ffi.Uint32,
+    ffi.Uint32,
+    ffi.Int32,
+    ffi.Int32,
+  )
+>(symbol: 'cef_texture_browser_wpe_send_mouse_button')
+external int cefTextureBrowserWpeSendMouseButton(
+  int x,
+  int y,
+  int modifiers,
+  int button,
+  int mouseUp,
+  int clickCount,
+);
+
+@ffi.Native<
+  ffi.Int32 Function(ffi.Int32, ffi.Int32, ffi.Uint32, ffi.Int32, ffi.Int32)
+>(symbol: 'cef_texture_browser_wpe_send_mouse_wheel')
+external int cefTextureBrowserWpeSendMouseWheel(
+  int x,
+  int y,
+  int modifiers,
+  int deltaX,
+  int deltaY,
+);
+
+@ffi.Native<
+  ffi.Int32 Function(
+    ffi.Uint32,
+    ffi.Uint32,
+    ffi.Int32,
+    ffi.Int32,
+    ffi.Uint32,
+    ffi.Uint32,
+  )
+>(symbol: 'cef_texture_browser_wpe_send_key')
+external int cefTextureBrowserWpeSendKey(
+  int eventType,
+  int modifiers,
+  int windowsKeyCode,
+  int nativeKeyCode,
+  int character,
+  int unmodifiedCharacter,
+);
+
+@ffi.Native<ffi.Uint64 Function()>(
+  symbol: 'cef_texture_browser_wpe_context_menu_generation',
+)
+external int cefTextureBrowserWpeContextMenuGeneration();
+
+@ffi.Native<ffi.Double Function()>(
+  symbol: 'cef_texture_browser_wpe_context_menu_x',
+)
+external double cefTextureBrowserWpeContextMenuX();
+
+@ffi.Native<ffi.Double Function()>(
+  symbol: 'cef_texture_browser_wpe_context_menu_y',
+)
+external double cefTextureBrowserWpeContextMenuY();
+
+@ffi.Native<ffi.Uint32 Function()>(
+  symbol: 'cef_texture_browser_wpe_context_menu_item_count',
+)
+external int cefTextureBrowserWpeContextMenuItemCount();
+
+@ffi.Native<ffi.Size Function(ffi.Uint32)>(
+  symbol: 'cef_texture_browser_wpe_context_menu_item_title_length',
+)
+external int cefTextureBrowserWpeContextMenuItemTitleLength(int index);
+
+@ffi.Native<ffi.Int32 Function(ffi.Uint32, ffi.Pointer<ffi.Uint8>, ffi.Size)>(
+  symbol: 'cef_texture_browser_wpe_context_menu_item_copy_title',
+)
+external int cefTextureBrowserWpeContextMenuItemCopyTitle(
+  int index,
+  ffi.Pointer<ffi.Uint8> destination,
+  int destinationLength,
+);
+
+@ffi.Native<ffi.Int32 Function(ffi.Uint32)>(
+  symbol: 'cef_texture_browser_wpe_context_menu_item_is_separator',
+)
+external int cefTextureBrowserWpeContextMenuItemIsSeparator(int index);
+
+@ffi.Native<ffi.Int32 Function(ffi.Uint32)>(
+  symbol: 'cef_texture_browser_wpe_context_menu_item_is_enabled',
+)
+external int cefTextureBrowserWpeContextMenuItemIsEnabled(int index);
+
+@ffi.Native<ffi.Int32 Function(ffi.Uint32)>(
+  symbol: 'cef_texture_browser_wpe_context_menu_activate',
+)
+external int cefTextureBrowserWpeContextMenuActivate(int index);
+
+@ffi.Native<ffi.Int32 Function()>(
+  symbol: 'cef_texture_browser_wpe_context_menu_dismiss',
+)
+external int cefTextureBrowserWpeContextMenuDismiss();
+
+@ffi.Native<ffi.Uint64 Function()>(
+  symbol: 'cef_texture_browser_wpe_frame_generation',
+)
+external int cefTextureBrowserWpeFrameGeneration();
+
+@ffi.Native<ffi.Uint64 Function()>(
+  symbol: 'cef_texture_browser_wpe_paint_count',
+)
+external int cefTextureBrowserWpePaintCount();
+
+@ffi.Native<ffi.Uint64 Function()>(
+  symbol: 'cef_texture_browser_wpe_valid_paint_count',
+)
+external int cefTextureBrowserWpeValidPaintCount();
+
+@ffi.Native<ffi.Uint32 Function()>(
+  symbol: 'cef_texture_browser_wpe_plane_count',
+)
+external int cefTextureBrowserWpePlaneCount();
+
+@ffi.Native<ffi.Uint32 Function()>(symbol: 'cef_texture_browser_wpe_format')
+external int cefTextureBrowserWpeFormat();
+
+@ffi.Native<ffi.Uint64 Function()>(symbol: 'cef_texture_browser_wpe_modifier')
+external int cefTextureBrowserWpeModifier();
+
+@ffi.Native<ffi.Uint32 Function()>(symbol: 'cef_texture_browser_wpe_width')
+external int cefTextureBrowserWpeWidth();
+
+@ffi.Native<ffi.Uint32 Function()>(symbol: 'cef_texture_browser_wpe_height')
+external int cefTextureBrowserWpeHeight();
+
+@ffi.Native<ffi.Uint32 Function()>(
+  symbol: 'cef_texture_browser_wpe_first_plane_stride',
+)
+external int cefTextureBrowserWpeFirstPlaneStride();

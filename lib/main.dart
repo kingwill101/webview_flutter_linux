@@ -93,6 +93,7 @@ class _ProbePageState extends State<ProbePage> with WidgetsBindingObserver {
   double? _requestedDeviceScaleFactor;
   bool _resizeScheduled = false;
   bool _contextMenuOpen = false;
+  Future<void> _wpeInputQueue = Future<void>.value();
 
   @override
   void initState() {
@@ -119,6 +120,10 @@ class _ProbePageState extends State<ProbePage> with WidgetsBindingObserver {
     _frameInFlight = true;
     try {
       final nextImage = await renderer.render(_frameNumber++);
+      final clipboardText = renderer.takeClipboardText();
+      if (clipboardText != null) {
+        await Clipboard.setData(ClipboardData(text: clipboardText));
+      }
       final contextMenu = renderer.takeContextMenu();
       if (contextMenu != null) {
         unawaited(_showBrowserContextMenu(contextMenu));
@@ -424,6 +429,9 @@ class _ProbePageState extends State<ProbePage> with WidgetsBindingObserver {
             focusNode: _surfaceFocusNode,
             onFocusChange: (focused) {
               _runCefAction(() => _renderer?.setFocus(focused));
+              if (focused) {
+                unawaited(_syncSystemClipboardToBrowser());
+              }
             },
             onKeyEvent: _handleKeyEvent,
             child: MouseRegion(
@@ -603,15 +611,29 @@ class _ProbePageState extends State<ProbePage> with WidgetsBindingObserver {
       (kSecondaryMouseButton, 2),
     ]) {
       if (buttons & entry.$1 == 0) continue;
-      _runCefAction(
-        () => _renderer?.sendMouseButton(
-          x: point.$1,
-          y: point.$2,
-          modifiers: _cefModifiers(buttons: _pressedButtons),
-          button: entry.$2,
-          mouseUp: mouseUp,
-        ),
-      );
+      final modifiers = _cefModifiers(buttons: _pressedButtons);
+      void sendButton() {
+        _runCefAction(
+          () => _renderer?.sendMouseButton(
+            x: point.$1,
+            y: point.$2,
+            modifiers: modifiers,
+            button: entry.$2,
+            mouseUp: mouseUp,
+          ),
+        );
+      }
+
+      if (_renderer?.browserEngine == BrowserEngine.wpe) {
+        _enqueueWpeInput(() async {
+          if (entry.$1 == kSecondaryMouseButton && !mouseUp) {
+            await _syncSystemClipboardToBrowser();
+          }
+          sendButton();
+        });
+      } else {
+        sendButton();
+      }
     }
   }
 
@@ -641,22 +663,38 @@ class _ProbePageState extends State<ProbePage> with WidgetsBindingObserver {
     final characterCode = character != null && character.isNotEmpty
         ? character.runes.first
         : 0;
-    _runCefAction(
-      () => _renderer?.sendKey(
-        eventType: eventType,
-        modifiers: modifiers,
-        windowsKeyCode: windowsKeyCode,
-        nativeKeyCode: event.physicalKey.usbHidUsage,
-        character: _renderer?.browserEngine == BrowserEngine.wpe
-            ? characterCode
-            : 0,
-        unmodifiedCharacter: _renderer?.browserEngine == BrowserEngine.wpe
-            ? characterCode
-            : 0,
-      ),
-    );
+    void sendKey() {
+      _runCefAction(
+        () => _renderer?.sendKey(
+          eventType: eventType,
+          modifiers: modifiers,
+          windowsKeyCode: windowsKeyCode,
+          nativeKeyCode: event.physicalKey.usbHidUsage,
+          character: _renderer?.browserEngine == BrowserEngine.wpe
+              ? characterCode
+              : 0,
+          unmodifiedCharacter: _renderer?.browserEngine == BrowserEngine.wpe
+              ? characterCode
+              : 0,
+        ),
+      );
+    }
 
     final keyboard = HardwareKeyboard.instance;
+    final isPasteKeyDown =
+        event is! KeyUpEvent &&
+        event.logicalKey == LogicalKeyboardKey.keyV &&
+        (keyboard.isControlPressed || keyboard.isMetaPressed);
+    if (_renderer?.browserEngine == BrowserEngine.wpe) {
+      _enqueueWpeInput(() async {
+        if (isPasteKeyDown) {
+          await _syncSystemClipboardToBrowser();
+        }
+        sendKey();
+      });
+    } else {
+      sendKey();
+    }
     if (_renderer?.browserEngine == BrowserEngine.cef &&
         event is! KeyUpEvent &&
         character != null &&
@@ -678,6 +716,25 @@ class _ProbePageState extends State<ProbePage> with WidgetsBindingObserver {
       }
     }
     return KeyEventResult.handled;
+  }
+
+  void _enqueueWpeInput(Future<void> Function() action) {
+    _wpeInputQueue = _wpeInputQueue.then((_) async {
+      try {
+        await action();
+      } catch (error) {
+        _stopFrameTimer();
+        if (mounted) setState(() => _error = error);
+      }
+    });
+  }
+
+  Future<void> _syncSystemClipboardToBrowser() async {
+    final renderer = _renderer;
+    if (!mounted || renderer?.browserEngine != BrowserEngine.wpe) return;
+    final data = await Clipboard.getData(Clipboard.kTextPlain);
+    if (!mounted) return;
+    renderer?.setClipboardText(data?.text ?? '');
   }
 
   (int, int) _cefPoint(Offset position) {

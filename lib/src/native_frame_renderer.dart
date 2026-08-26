@@ -96,6 +96,8 @@ final class NativeFrameRenderer {
       if (enableBrowser) {
         if (this.browserEngine == BrowserEngine.wpe) {
           _initializeWpe(initialUrl);
+          _lastClipboardChangeCount =
+              cefTextureBrowserWpeClipboardChangeCount();
         } else {
           final executableDirectory = File(Platform.resolvedExecutable).parent;
           final runtimeDirectory = Directory(
@@ -141,6 +143,7 @@ final class NativeFrameRenderer {
   int _requestedTextureGeneration = -1;
   int _requestedAcceleratedPaintCount = -1;
   int _lastContextMenuGeneration = 0;
+  int _lastClipboardChangeCount = -1;
   bool _disposed = false;
 
   int get width => _width;
@@ -472,6 +475,48 @@ final class NativeFrameRenderer {
               unmodifiedCharacter,
             ),
     );
+  }
+
+  void setClipboardText(String text) {
+    if (browserEngine != BrowserEngine.wpe || !browserEnabled || _disposed) {
+      return;
+    }
+    final nativeText = text.toNativeUtf8();
+    try {
+      _checkInputStatus(
+        'clipboard write',
+        cefTextureBrowserWpeClipboardSetText(nativeText.cast()),
+      );
+      _lastClipboardChangeCount = cefTextureBrowserWpeClipboardChangeCount();
+    } finally {
+      calloc.free(nativeText);
+    }
+  }
+
+  String? takeClipboardText() {
+    if (browserEngine != BrowserEngine.wpe || !browserEnabled || _disposed) {
+      return null;
+    }
+    final changeCount = cefTextureBrowserWpeClipboardChangeCount();
+    if (changeCount < 0 || changeCount == _lastClipboardChangeCount) {
+      return null;
+    }
+    final length = cefTextureBrowserWpeClipboardTextLength();
+    if (length < 0) return null;
+    _lastClipboardChangeCount = changeCount;
+    if (length == 0) return '';
+    final destination = calloc<Uint8>(length);
+    try {
+      final copied = cefTextureBrowserWpeClipboardCopyText(destination, length);
+      if (copied < 0) {
+        throw StateError(
+          '$browserEngineLabel clipboard read failed with status $copied.',
+        );
+      }
+      return utf8.decode(destination.asTypedList(copied), allowMalformed: true);
+    } finally {
+      calloc.free(destination);
+    }
   }
 
   NativeBrowserContextMenu? takeContextMenu() {

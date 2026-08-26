@@ -386,6 +386,29 @@ external int cefTextureBrowserWpeSendKey(
   int unmodifiedCharacter,
 );
 
+@ffi.Native<ffi.Int64 Function()>(
+  symbol: 'cef_texture_browser_wpe_clipboard_change_count',
+)
+external int cefTextureBrowserWpeClipboardChangeCount();
+
+@ffi.Native<ffi.IntPtr Function()>(
+  symbol: 'cef_texture_browser_wpe_clipboard_text_length',
+)
+external int cefTextureBrowserWpeClipboardTextLength();
+
+@ffi.Native<ffi.Int32 Function(ffi.Pointer<ffi.Uint8>, ffi.Size)>(
+  symbol: 'cef_texture_browser_wpe_clipboard_copy_text',
+)
+external int cefTextureBrowserWpeClipboardCopyText(
+  ffi.Pointer<ffi.Uint8> destination,
+  int destinationLength,
+);
+
+@ffi.Native<ffi.Int32 Function(ffi.Pointer<ffi.Char>)>(
+  symbol: 'cef_texture_browser_wpe_clipboard_set_text',
+)
+external int cefTextureBrowserWpeClipboardSetText(ffi.Pointer<ffi.Char> text);
+
 @ffi.Native<ffi.Uint64 Function()>(
   symbol: 'cef_texture_browser_wpe_context_menu_generation',
 )

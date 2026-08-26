@@ -64,6 +64,16 @@ struct WpeEvent {
 }
 
 #[repr(C)]
+struct WpeClipboard {
+    _opaque: [u8; 0],
+}
+
+#[repr(C)]
+struct WpeClipboardContent {
+    _opaque: [u8; 0],
+}
+
+#[repr(C)]
 struct WebKitWebView {
     _opaque: [u8; 0],
 }
@@ -100,6 +110,17 @@ struct GVariant {
 
 unsafe extern "C" {
     fn wpe_display_headless_new() -> *mut WpeDisplay;
+    fn wpe_display_get_clipboard(display: *mut WpeDisplay) -> *mut WpeClipboard;
+    fn wpe_clipboard_get_change_count(clipboard: *mut WpeClipboard) -> i64;
+    fn wpe_clipboard_set_content(clipboard: *mut WpeClipboard, content: *mut WpeClipboardContent);
+    fn wpe_clipboard_read_text(
+        clipboard: *mut WpeClipboard,
+        format: *const c_char,
+        size: *mut usize,
+    ) -> *mut c_char;
+    fn wpe_clipboard_content_new() -> *mut WpeClipboardContent;
+    fn wpe_clipboard_content_unref(content: *mut WpeClipboardContent);
+    fn wpe_clipboard_content_set_text(content: *mut WpeClipboardContent, text: *const c_char);
     fn webkit_network_session_new_ephemeral() -> *mut WebKitNetworkSession;
     fn webkit_web_view_get_type() -> glib::ffi::GType;
     fn webkit_web_view_get_display(web_view: *mut WebKitWebView) -> *mut WpeDisplay;
@@ -560,6 +581,99 @@ fn with_context_menu_item<T>(
             .items
             .get(index as usize)
             .map_or(fallback, operation)
+    })
+}
+
+fn with_clipboard<T>(fallback: T, operation: impl FnOnce(*mut WpeClipboard) -> T) -> T {
+    RUNTIME.with_borrow(|runtime| {
+        let Some(runtime) = runtime.as_ref() else {
+            return fallback;
+        };
+        let raw_webview =
+            ToGlibPtr::<*mut glib::gobject_ffi::GObject>::to_glib_none(&runtime.webview).0
+                as *mut WebKitWebView;
+        let display = unsafe { webkit_web_view_get_display(raw_webview) };
+        if display.is_null() {
+            return fallback;
+        }
+        let clipboard = unsafe { wpe_display_get_clipboard(display) };
+        if clipboard.is_null() {
+            fallback
+        } else {
+            operation(clipboard)
+        }
+    })
+}
+
+const UTF8_TEXT_FORMAT: &[u8] = b"text/plain;charset=utf-8\0";
+
+#[unsafe(no_mangle)]
+pub extern "C" fn cef_texture_browser_wpe_clipboard_change_count() -> i64 {
+    with_clipboard(-1, |clipboard| unsafe {
+        wpe_clipboard_get_change_count(clipboard)
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn cef_texture_browser_wpe_clipboard_text_length() -> isize {
+    with_clipboard(-1, |clipboard| {
+        let mut length = 0;
+        let text = unsafe {
+            wpe_clipboard_read_text(clipboard, UTF8_TEXT_FORMAT.as_ptr().cast(), &mut length)
+        };
+        if text.is_null() {
+            -1
+        } else {
+            unsafe { glib::ffi::g_free(text.cast()) };
+            length.min(isize::MAX as usize) as isize
+        }
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cef_texture_browser_wpe_clipboard_copy_text(
+    destination: *mut u8,
+    destination_length: usize,
+) -> i32 {
+    if destination.is_null() {
+        return -1;
+    }
+    with_clipboard(-2, |clipboard| {
+        let mut length = 0;
+        let text = unsafe {
+            wpe_clipboard_read_text(clipboard, UTF8_TEXT_FORMAT.as_ptr().cast(), &mut length)
+        };
+        if text.is_null() {
+            return -4;
+        }
+        if destination_length < length || length > i32::MAX as usize {
+            unsafe { glib::ffi::g_free(text.cast()) };
+            return -3;
+        }
+        unsafe {
+            std::ptr::copy_nonoverlapping(text.cast(), destination, length);
+            glib::ffi::g_free(text.cast());
+        }
+        length as i32
+    })
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn cef_texture_browser_wpe_clipboard_set_text(text: *const c_char) -> i32 {
+    if text.is_null() || unsafe { CStr::from_ptr(text) }.to_str().is_err() {
+        return -1;
+    }
+    with_clipboard(-2, |clipboard| {
+        let content = unsafe { wpe_clipboard_content_new() };
+        if content.is_null() {
+            return -3;
+        }
+        unsafe {
+            wpe_clipboard_content_set_text(content, text);
+            wpe_clipboard_set_content(clipboard, content);
+            wpe_clipboard_content_unref(content);
+        }
+        0
     })
 }
 

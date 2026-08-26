@@ -96,11 +96,12 @@ processes cleanly.
 
 The experiment currently supports navigation, resize, audio, pointer movement,
 primary/middle/secondary clicks, wheel input, common XKB keyboard input and
-shortcuts, and Flutter-rendered context menus backed by WebKit actions. Before
-this is an application-ready browser layer it still needs complete IME
-composition, cursor updates, browser popups, broader clipboard validation,
-downloads, dialogs, accessibility, crash recovery, repeated lifecycle testing,
-and validation across GPU drivers and display protocols.
+shortcuts, bidirectional plain-text clipboard bridging, and Flutter-rendered
+context menus backed by WebKit actions. Before this is an application-ready
+browser layer it still needs complete IME composition, cursor updates, browser
+popups, rich clipboard formats, downloads, dialogs, accessibility, crash
+recovery, repeated lifecycle testing, and validation across GPU drivers and
+display protocols.
 
 `marionette_flutter` is enabled in ordinary debug runs for inspecting the
 Flutter controls around the browser surface; tests and release builds retain

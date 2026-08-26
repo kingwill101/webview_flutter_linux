@@ -1,4 +1,4 @@
-name: zikzak_inappwebview_latest_probe
+name: cef_texture_browser
 description: A Rust FFI and off-screen browser rendering probe for Flutter Linux.
 publish_to: none
 version: 1.0.0+1

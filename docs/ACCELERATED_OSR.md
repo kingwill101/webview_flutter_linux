@@ -48,7 +48,7 @@ decision all remain in Rust.
 
 1. **Capability probe — implemented and verified on the development host**
    - Select the opt-in ABI v6 transport with
-     `ZIKZAK_CEF_ACCELERATED_PROBE=1`.
+     `CEF_TEXTURE_BROWSER_ACCELERATED_PROBE=1`.
    - Enable `shared_texture_enabled`, GPU compositing, `--use-angle=gl-egl`,
      and an explicitly selected Ozone platform.
    - Record paint count, plane count, format, modifier, coded size, and visible

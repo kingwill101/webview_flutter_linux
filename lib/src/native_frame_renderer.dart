@@ -18,11 +18,11 @@ final class NativeFrameRenderer {
     bool? acceleratedProbe,
   }) : acceleratedProbe =
            acceleratedProbe ??
-           Platform.environment['ZIKZAK_CEF_ACCELERATED_PROBE'] == '1',
-       apiVersion = zikzakApiVersion(),
-       _width = zikzakFrameWidth(),
-       _height = zikzakFrameHeight(),
-       _byteLength = zikzakFrameByteLength() {
+           Platform.environment['CEF_TEXTURE_BROWSER_ACCELERATED_PROBE'] == '1',
+       apiVersion = cefTextureBrowserApiVersion(),
+       _width = cefTextureBrowserFrameWidth(),
+       _height = cefTextureBrowserFrameHeight(),
+       _byteLength = cefTextureBrowserFrameByteLength() {
     final expectedLength = _width * _height * 4;
     if (_byteLength != expectedLength) {
       throw StateError(
@@ -37,7 +37,9 @@ final class NativeFrameRenderer {
         if (engineHandle == null) {
           throw ArgumentError.notNull('engineHandle');
         }
-        final textureStatus = zikzakFlutterTextureInitialize(engineHandle);
+        final textureStatus = cefTextureBrowserFlutterTextureInitialize(
+          engineHandle,
+        );
         if (textureStatus != 0 && textureStatus != 1) {
           throw StateError(
             'Irondash Flutter texture initialization failed with status '
@@ -60,7 +62,7 @@ final class NativeFrameRenderer {
       }
     } catch (_) {
       if (enableCef || this.acceleratedProbe) {
-        zikzakNativeShutdown();
+        cefTextureBrowserNativeShutdown();
       }
       calloc.free(_destination);
       _disposed = true;
@@ -90,34 +92,41 @@ final class NativeFrameRenderer {
   int get width => _width;
   int get height => _height;
   int get byteLength => _byteLength;
-  int get textureId => zikzakFlutterTextureId();
-  int get textureWidth => zikzakFlutterTextureWidth();
-  int get textureHeight => zikzakFlutterTextureHeight();
-  int get textureGeneration => zikzakFlutterTextureGeneration();
-  int get textureGlName => zikzakFlutterTextureGlName();
+  int get textureId => cefTextureBrowserFlutterTextureId();
+  int get textureWidth => cefTextureBrowserFlutterTextureWidth();
+  int get textureHeight => cefTextureBrowserFlutterTextureHeight();
+  int get textureGeneration => cefTextureBrowserFlutterTextureGeneration();
+  int get textureGlName => cefTextureBrowserFlutterTextureGlName();
   bool get textureGlContextReady =>
-      zikzakFlutterTextureEglDisplay() != 0 &&
-      zikzakFlutterTextureEglContext() != 0;
-  int get textureDmaBufGeneration => zikzakFlutterTextureDmaBufGeneration();
-  int get textureDmaBufStatus => zikzakFlutterTextureDmaBufStatus();
-  int get textureDmaBufCopyCount => zikzakFlutterTextureDmaBufCopyCount();
+      cefTextureBrowserFlutterTextureEglDisplay() != 0 &&
+      cefTextureBrowserFlutterTextureEglContext() != 0;
+  int get textureDmaBufGeneration =>
+      cefTextureBrowserFlutterTextureDmaBufGeneration();
+  int get textureDmaBufStatus => cefTextureBrowserFlutterTextureDmaBufStatus();
+  int get textureDmaBufCopyCount =>
+      cefTextureBrowserFlutterTextureDmaBufCopyCount();
   int get textureDmaBufLastCopyMicros =>
-      zikzakFlutterTextureDmaBufLastCopyMicros();
+      cefTextureBrowserFlutterTextureDmaBufLastCopyMicros();
   int get textureDmaBufMaxCopyMicros =>
-      zikzakFlutterTextureDmaBufMaxCopyMicros();
+      cefTextureBrowserFlutterTextureDmaBufMaxCopyMicros();
   int get textureDmaBufFenceFallbackCount =>
-      zikzakFlutterTextureDmaBufFenceFallbackCount();
-  int get acceleratedPaintCount => zikzakCefAcceleratedPaintCount();
-  int get acceleratedValidPaintCount => zikzakCefAcceleratedValidPaintCount();
-  int get acceleratedPlaneCount => zikzakCefAcceleratedPlaneCount();
-  int get acceleratedFormat => zikzakCefAcceleratedFormat();
-  int get acceleratedModifier => zikzakCefAcceleratedModifier();
-  int get acceleratedCodedWidth => zikzakCefAcceleratedCodedWidth();
-  int get acceleratedCodedHeight => zikzakCefAcceleratedCodedHeight();
-  int get acceleratedVisibleWidth => zikzakCefAcceleratedVisibleWidth();
-  int get acceleratedVisibleHeight => zikzakCefAcceleratedVisibleHeight();
-  int get acceleratedFirstPlaneStride => zikzakCefAcceleratedFirstPlaneStride();
-  int get dmaBufCallbackGeneration => zikzakCefDmaBufGeneration();
+      cefTextureBrowserFlutterTextureDmaBufFenceFallbackCount();
+  int get acceleratedPaintCount => cefTextureBrowserCefAcceleratedPaintCount();
+  int get acceleratedValidPaintCount =>
+      cefTextureBrowserCefAcceleratedValidPaintCount();
+  int get acceleratedPlaneCount => cefTextureBrowserCefAcceleratedPlaneCount();
+  int get acceleratedFormat => cefTextureBrowserCefAcceleratedFormat();
+  int get acceleratedModifier => cefTextureBrowserCefAcceleratedModifier();
+  int get acceleratedCodedWidth => cefTextureBrowserCefAcceleratedCodedWidth();
+  int get acceleratedCodedHeight =>
+      cefTextureBrowserCefAcceleratedCodedHeight();
+  int get acceleratedVisibleWidth =>
+      cefTextureBrowserCefAcceleratedVisibleWidth();
+  int get acceleratedVisibleHeight =>
+      cefTextureBrowserCefAcceleratedVisibleHeight();
+  int get acceleratedFirstPlaneStride =>
+      cefTextureBrowserCefAcceleratedFirstPlaneStride();
+  int get dmaBufCallbackGeneration => cefTextureBrowserCefDmaBufGeneration();
 
   Future<ui.Image?> render(int frameNumber) {
     if (_disposed) {
@@ -125,18 +134,18 @@ final class NativeFrameRenderer {
     }
 
     if (cefEnabled) {
-      final pumpStatus = zikzakCefPump();
+      final pumpStatus = cefTextureBrowserCefPump();
       if (pumpStatus != 0) {
         throw StateError('CEF message pump failed with status $pumpStatus.');
       }
       if (acceleratedProbe) {
         _requestTextureFrameIfNeeded();
       }
-      final generation = zikzakCefFrameGeneration();
+      final generation = cefTextureBrowserCefFrameGeneration();
       if (generation > cefFrameGeneration) {
-        final frameWidth = zikzakCefFrameWidth();
-        final frameHeight = zikzakCefFrameHeight();
-        final frameByteLength = zikzakCefFrameByteLength();
+        final frameWidth = cefTextureBrowserCefFrameWidth();
+        final frameHeight = cefTextureBrowserCefFrameHeight();
+        final frameByteLength = cefTextureBrowserCefFrameByteLength();
         final expectedLength = frameWidth * frameHeight * 4;
         if (frameWidth <= 0 ||
             frameHeight <= 0 ||
@@ -147,7 +156,10 @@ final class NativeFrameRenderer {
           );
         }
         _resizeBuffer(frameWidth, frameHeight, frameByteLength);
-        final copyStatus = zikzakCefCopyLatestFrame(_destination, _byteLength);
+        final copyStatus = cefTextureBrowserCefCopyLatestFrame(
+          _destination,
+          _byteLength,
+        );
         if (copyStatus < 0) {
           throw StateError('CEF frame copy failed with status $copyStatus.');
         }
@@ -164,7 +176,7 @@ final class NativeFrameRenderer {
       if (acceleratedProbe && _proceduralFrameRendered) {
         return Future.value(null);
       }
-      final result = zikzakRenderTestFrame(
+      final result = cefTextureBrowserRenderTestFrame(
         _destination,
         _byteLength,
         frameNumber,
@@ -190,7 +202,7 @@ final class NativeFrameRenderer {
     if (!cefEnabled) return;
     final nativeUrl = url.toNativeUtf8();
     try {
-      final status = zikzakCefNavigate(nativeUrl.cast());
+      final status = cefTextureBrowserCefNavigate(nativeUrl.cast());
       if (status != 0) {
         throw StateError('CEF navigation failed with status $status.');
       }
@@ -213,7 +225,7 @@ final class NativeFrameRenderer {
         _deviceScaleFactor == scale) {
       return;
     }
-    final status = zikzakCefResize(width, height, scale);
+    final status = cefTextureBrowserCefResize(width, height, scale);
     if (status != 0) {
       throw StateError('CEF surface resize failed with status $status.');
     }
@@ -223,7 +235,7 @@ final class NativeFrameRenderer {
     if (acceleratedProbe) {
       final physicalWidth = (width * scale).ceil().clamp(1, 16384);
       final physicalHeight = (height * scale).ceil().clamp(1, 16384);
-      final textureStatus = zikzakFlutterTextureResize(
+      final textureStatus = cefTextureBrowserFlutterTextureResize(
         physicalWidth,
         physicalHeight,
       );
@@ -243,7 +255,7 @@ final class NativeFrameRenderer {
         paintCount == _requestedAcceleratedPaintCount) {
       return;
     }
-    final status = zikzakFlutterTextureRequestFrame();
+    final status = cefTextureBrowserFlutterTextureRequestFrame();
     if (status != 0) {
       throw StateError(
         'Flutter GL texture frame request failed with status $status.',
@@ -254,11 +266,14 @@ final class NativeFrameRenderer {
   }
 
   void setFocus(bool focused) {
-    _checkInputStatus('focus', zikzakCefSetFocus(focused ? 1 : 0));
+    _checkInputStatus('focus', cefTextureBrowserCefSetFocus(focused ? 1 : 0));
   }
 
   void setVisibility(bool visible) {
-    _checkInputStatus('visibility', zikzakCefSetVisibility(visible ? 1 : 0));
+    _checkInputStatus(
+      'visibility',
+      cefTextureBrowserCefSetVisibility(visible ? 1 : 0),
+    );
   }
 
   void sendMouseMove({
@@ -269,7 +284,7 @@ final class NativeFrameRenderer {
   }) {
     _checkInputStatus(
       'mouse move',
-      zikzakCefSendMouseMove(x, y, modifiers, mouseLeave ? 1 : 0),
+      cefTextureBrowserCefSendMouseMove(x, y, modifiers, mouseLeave ? 1 : 0),
     );
   }
 
@@ -283,7 +298,7 @@ final class NativeFrameRenderer {
   }) {
     _checkInputStatus(
       'mouse button',
-      zikzakCefSendMouseButton(
+      cefTextureBrowserCefSendMouseButton(
         x,
         y,
         modifiers,
@@ -303,7 +318,7 @@ final class NativeFrameRenderer {
   }) {
     _checkInputStatus(
       'mouse wheel',
-      zikzakCefSendMouseWheel(x, y, modifiers, deltaX, deltaY),
+      cefTextureBrowserCefSendMouseWheel(x, y, modifiers, deltaX, deltaY),
     );
   }
 
@@ -317,7 +332,7 @@ final class NativeFrameRenderer {
   }) {
     _checkInputStatus(
       'key',
-      zikzakCefSendKey(
+      cefTextureBrowserCefSendKey(
         eventType,
         modifiers,
         windowsKeyCode,
@@ -354,7 +369,7 @@ final class NativeFrameRenderer {
     final nativeRuntimeDirectory = runtimeDirectory.toNativeUtf8();
     final nativeInitialUrl = initialUrl.toNativeUtf8();
     try {
-      final status = zikzakCefInitializeWithOptions(
+      final status = cefTextureBrowserCefInitializeWithOptions(
         nativeRuntimeDirectory.cast(),
         nativeInitialUrl.cast(),
         acceleratedProbe ? 1 : 0,
@@ -376,7 +391,7 @@ final class NativeFrameRenderer {
     if (_disposed) return;
     _disposed = true;
     if (cefEnabled || acceleratedProbe) {
-      final shutdownStatus = zikzakNativeShutdown();
+      final shutdownStatus = cefTextureBrowserNativeShutdown();
       if (shutdownStatus < 0) {
         stderr.writeln(
           'Native browser shutdown failed with status $shutdownStatus.',

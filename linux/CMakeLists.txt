@@ -4,10 +4,10 @@ project(runner LANGUAGES C CXX)
 
 # The name of the executable created for the application. Change this to change
 # the on-disk name of your application.
-set(BINARY_NAME "zikzak_inappwebview_latest_probe")
+set(BINARY_NAME "cef_texture_browser")
 # The unique GTK application identifier for this application. See:
 # https://wiki.gnome.org/HowDoI/ChooseApplicationID
-set(APPLICATION_ID "com.example.zikzak_inappwebview_latest_probe")
+set(APPLICATION_ID "com.example.cef_texture_browser")
 
 # Explicitly opt in to modern CMake behaviors to avoid warnings with recent
 # versions of CMake.
@@ -63,7 +63,7 @@ add_subdirectory("runner")
 set(CEF_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../third_party/cef")
 set(RUST_CRATE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../rust")
 set(CEF_CARGO_RUNTIME_DIR "${RUST_CRATE_DIR}/target/release")
-set(CEF_HELPER "${CEF_CARGO_RUNTIME_DIR}/zikzak_cef_helper")
+set(CEF_HELPER "${CEF_CARGO_RUNTIME_DIR}/cef_texture_browser_helper")
 
 if(NOT EXISTS "${CEF_SOURCE_DIR}/archive.json")
   message(FATAL_ERROR
@@ -78,17 +78,17 @@ add_custom_command(
     --manifest-path "${RUST_CRATE_DIR}/Cargo.toml"
     --release
     --features cef-runtime
-    --bin zikzak_cef_helper
+    --bin cef_texture_browser_helper
   DEPENDS
     "${RUST_CRATE_DIR}/Cargo.toml"
     "${RUST_CRATE_DIR}/Cargo.lock"
-    "${RUST_CRATE_DIR}/src/bin/zikzak_cef_helper.rs"
+    "${RUST_CRATE_DIR}/src/bin/cef_texture_browser_helper.rs"
   WORKING_DIRECTORY "${RUST_CRATE_DIR}"
   COMMENT "Building the CEF subprocess helper"
   VERBATIM
 )
-add_custom_target(zikzak_cef_helper ALL DEPENDS "${CEF_HELPER}")
-add_dependencies(${BINARY_NAME} zikzak_cef_helper)
+add_custom_target(cef_texture_browser_helper ALL DEPENDS "${CEF_HELPER}")
+add_dependencies(${BINARY_NAME} cef_texture_browser_helper)
 
 # Run the Flutter tool portions of the build. This must not be removed.
 add_dependencies(${BINARY_NAME} flutter_assemble)
@@ -106,6 +106,17 @@ set_target_properties(${BINARY_NAME}
 # Generated plugin build rules, which manage building the plugins and adding
 # them to the application.
 include(flutter/generated_plugins.cmake)
+
+# Flutter installs plugin libraries as files, so their build-tree RPATH is not
+# rewritten during bundling. Keep the Irondash registrar relocatable and avoid
+# embedding the checkout path in release artifacts.
+if(TARGET irondash_engine_context_plugin)
+  set_target_properties(irondash_engine_context_plugin
+    PROPERTIES
+    BUILD_WITH_INSTALL_RPATH TRUE
+    INSTALL_RPATH "$ORIGIN"
+  )
+endif()
 
 
 # === Installation ===

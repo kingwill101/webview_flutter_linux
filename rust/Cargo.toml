@@ -1,11 +1,11 @@
 [package]
-name = "zikzak-browser-native"
+name = "cef-texture-browser-native"
 version = "0.1.0"
 edition = "2024"
 publish = false
 
 [lib]
-name = "zikzak_browser_native"
+name = "cef_texture_browser_native"
 crate-type = ["staticlib", "cdylib"]
 
 [features]
@@ -20,8 +20,8 @@ cef = { git = "https://github.com/tauri-apps/cef-rs", rev = "a2e15ae659c4b395788
 irondash_texture = "0.5.0"
 
 [[bin]]
-name = "zikzak_cef_helper"
-path = "src/bin/zikzak_cef_helper.rs"
+name = "cef_texture_browser_helper"
+path = "src/bin/cef_texture_browser_helper.rs"
 required-features = ["cef-runtime"]
 
 [profile.release]

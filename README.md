@@ -64,7 +64,7 @@ dart run tool/setup_cef.dart
 The download is about 306 MiB. The exported development distribution is about
 1.5 GiB because its `libcef.so` contains debug information. The Linux CMake
 bundle installs `libcef`, resources, locales, graphics support libraries, and
-the dedicated `zikzak_cef_helper` beside the Rust native asset.
+the dedicated `cef_texture_browser_helper` beside the Rust native asset.
 
 ## Run and verify
 
@@ -81,12 +81,12 @@ flutter run -d linux
 Run the accelerated callback probe with:
 
 ```sh
-ZIKZAK_CEF_ACCELERATED_PROBE=1 flutter run -d linux
+CEF_TEXTURE_BROWSER_ACCELERATED_PROBE=1 flutter run -d linux
 ```
 
 The probe selects Ozone Wayland when running in a Wayland session and otherwise
 uses X11. Override it for driver comparisons with
-`ZIKZAK_CEF_OZONE_PLATFORM=x11` or `ZIKZAK_CEF_OZONE_PLATFORM=wayland`. The
+`CEF_TEXTURE_BROWSER_OZONE_PLATFORM=x11` or `CEF_TEXTURE_BROWSER_OZONE_PLATFORM=wayland`. The
 surface reports paint validity, coded size, plane count, CEF pixel format, DRM
 modifier, first-plane stride, Flutter GL texture identity, successful copy
 count, copy latency, fence fallback count, and exact-size status.

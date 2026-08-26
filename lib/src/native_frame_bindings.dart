@@ -2,201 +2,243 @@
 
 import 'dart:ffi' as ffi;
 
-@ffi.Native<ffi.Uint32 Function()>(symbol: 'zikzak_api_version')
-external int zikzakApiVersion();
+@ffi.Native<ffi.Uint32 Function()>(symbol: 'cef_texture_browser_api_version')
+external int cefTextureBrowserApiVersion();
 
-@ffi.Native<ffi.Uint32 Function()>(symbol: 'zikzak_frame_width')
-external int zikzakFrameWidth();
+@ffi.Native<ffi.Uint32 Function()>(symbol: 'cef_texture_browser_frame_width')
+external int cefTextureBrowserFrameWidth();
 
-@ffi.Native<ffi.Uint32 Function()>(symbol: 'zikzak_frame_height')
-external int zikzakFrameHeight();
+@ffi.Native<ffi.Uint32 Function()>(symbol: 'cef_texture_browser_frame_height')
+external int cefTextureBrowserFrameHeight();
 
-@ffi.Native<ffi.Size Function()>(symbol: 'zikzak_frame_byte_length')
-external int zikzakFrameByteLength();
+@ffi.Native<ffi.Size Function()>(
+  symbol: 'cef_texture_browser_frame_byte_length',
+)
+external int cefTextureBrowserFrameByteLength();
 
 @ffi.Native<ffi.Int32 Function(ffi.Int64)>(
-  symbol: 'zikzak_flutter_texture_initialize',
+  symbol: 'cef_texture_browser_flutter_texture_initialize',
 )
-external int zikzakFlutterTextureInitialize(int engineHandle);
+external int cefTextureBrowserFlutterTextureInitialize(int engineHandle);
 
-@ffi.Native<ffi.Int32 Function()>(symbol: 'zikzak_native_shutdown')
-external int zikzakNativeShutdown();
+@ffi.Native<ffi.Int32 Function()>(symbol: 'cef_texture_browser_native_shutdown')
+external int cefTextureBrowserNativeShutdown();
 
-@ffi.Native<ffi.Int64 Function()>(symbol: 'zikzak_flutter_texture_id')
-external int zikzakFlutterTextureId();
+@ffi.Native<ffi.Int64 Function()>(
+  symbol: 'cef_texture_browser_flutter_texture_id',
+)
+external int cefTextureBrowserFlutterTextureId();
 
 @ffi.Native<ffi.Int32 Function(ffi.Uint32, ffi.Uint32)>(
-  symbol: 'zikzak_flutter_texture_resize',
+  symbol: 'cef_texture_browser_flutter_texture_resize',
 )
-external int zikzakFlutterTextureResize(int width, int height);
+external int cefTextureBrowserFlutterTextureResize(int width, int height);
 
-@ffi.Native<ffi.Uint32 Function()>(symbol: 'zikzak_flutter_texture_width')
-external int zikzakFlutterTextureWidth();
+@ffi.Native<ffi.Uint32 Function()>(
+  symbol: 'cef_texture_browser_flutter_texture_width',
+)
+external int cefTextureBrowserFlutterTextureWidth();
 
-@ffi.Native<ffi.Uint32 Function()>(symbol: 'zikzak_flutter_texture_height')
-external int zikzakFlutterTextureHeight();
+@ffi.Native<ffi.Uint32 Function()>(
+  symbol: 'cef_texture_browser_flutter_texture_height',
+)
+external int cefTextureBrowserFlutterTextureHeight();
 
-@ffi.Native<ffi.Uint64 Function()>(symbol: 'zikzak_flutter_texture_generation')
-external int zikzakFlutterTextureGeneration();
+@ffi.Native<ffi.Uint64 Function()>(
+  symbol: 'cef_texture_browser_flutter_texture_generation',
+)
+external int cefTextureBrowserFlutterTextureGeneration();
 
 @ffi.Native<ffi.Int32 Function()>(
-  symbol: 'zikzak_flutter_texture_request_frame',
+  symbol: 'cef_texture_browser_flutter_texture_request_frame',
 )
-external int zikzakFlutterTextureRequestFrame();
+external int cefTextureBrowserFlutterTextureRequestFrame();
 
-@ffi.Native<ffi.Uint32 Function()>(symbol: 'zikzak_flutter_texture_gl_name')
-external int zikzakFlutterTextureGlName();
+@ffi.Native<ffi.Uint32 Function()>(
+  symbol: 'cef_texture_browser_flutter_texture_gl_name',
+)
+external int cefTextureBrowserFlutterTextureGlName();
 
-@ffi.Native<ffi.Size Function()>(symbol: 'zikzak_flutter_texture_egl_display')
-external int zikzakFlutterTextureEglDisplay();
+@ffi.Native<ffi.Size Function()>(
+  symbol: 'cef_texture_browser_flutter_texture_egl_display',
+)
+external int cefTextureBrowserFlutterTextureEglDisplay();
 
-@ffi.Native<ffi.Size Function()>(symbol: 'zikzak_flutter_texture_egl_context')
-external int zikzakFlutterTextureEglContext();
+@ffi.Native<ffi.Size Function()>(
+  symbol: 'cef_texture_browser_flutter_texture_egl_context',
+)
+external int cefTextureBrowserFlutterTextureEglContext();
 
 @ffi.Native<ffi.Uint64 Function()>(
-  symbol: 'zikzak_flutter_texture_dma_buf_generation',
+  symbol: 'cef_texture_browser_flutter_texture_dma_buf_generation',
 )
-external int zikzakFlutterTextureDmaBufGeneration();
+external int cefTextureBrowserFlutterTextureDmaBufGeneration();
 
 @ffi.Native<ffi.Int32 Function()>(
-  symbol: 'zikzak_flutter_texture_dma_buf_status',
+  symbol: 'cef_texture_browser_flutter_texture_dma_buf_status',
 )
-external int zikzakFlutterTextureDmaBufStatus();
+external int cefTextureBrowserFlutterTextureDmaBufStatus();
 
 @ffi.Native<ffi.Uint64 Function()>(
-  symbol: 'zikzak_flutter_texture_dma_buf_copy_count',
+  symbol: 'cef_texture_browser_flutter_texture_dma_buf_copy_count',
 )
-external int zikzakFlutterTextureDmaBufCopyCount();
+external int cefTextureBrowserFlutterTextureDmaBufCopyCount();
 
 @ffi.Native<ffi.Uint64 Function()>(
-  symbol: 'zikzak_flutter_texture_dma_buf_last_copy_micros',
+  symbol: 'cef_texture_browser_flutter_texture_dma_buf_last_copy_micros',
 )
-external int zikzakFlutterTextureDmaBufLastCopyMicros();
+external int cefTextureBrowserFlutterTextureDmaBufLastCopyMicros();
 
 @ffi.Native<ffi.Uint64 Function()>(
-  symbol: 'zikzak_flutter_texture_dma_buf_max_copy_micros',
+  symbol: 'cef_texture_browser_flutter_texture_dma_buf_max_copy_micros',
 )
-external int zikzakFlutterTextureDmaBufMaxCopyMicros();
+external int cefTextureBrowserFlutterTextureDmaBufMaxCopyMicros();
 
 @ffi.Native<ffi.Uint64 Function()>(
-  symbol: 'zikzak_flutter_texture_dma_buf_fence_fallback_count',
+  symbol: 'cef_texture_browser_flutter_texture_dma_buf_fence_fallback_count',
 )
-external int zikzakFlutterTextureDmaBufFenceFallbackCount();
+external int cefTextureBrowserFlutterTextureDmaBufFenceFallbackCount();
 
 @ffi.Native<ffi.Int32 Function(ffi.Pointer<ffi.Uint8>, ffi.Size, ffi.Uint64)>(
-  symbol: 'zikzak_render_test_frame',
+  symbol: 'cef_texture_browser_render_test_frame',
 )
-external int zikzakRenderTestFrame(
+external int cefTextureBrowserRenderTestFrame(
   ffi.Pointer<ffi.Uint8> destination,
   int destinationLength,
   int frameNumber,
 );
 
 @ffi.Native<ffi.Int32 Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>)>(
-  symbol: 'zikzak_cef_initialize',
+  symbol: 'cef_texture_browser_cef_initialize',
 )
-external int zikzakCefInitialize(
+external int cefTextureBrowserCefInitialize(
   ffi.Pointer<ffi.Char> runtimeDirectory,
   ffi.Pointer<ffi.Char> initialUrl,
 );
 
 @ffi.Native<
   ffi.Int32 Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>, ffi.Uint32)
->(symbol: 'zikzak_cef_initialize_with_options')
-external int zikzakCefInitializeWithOptions(
+>(symbol: 'cef_texture_browser_cef_initialize_with_options')
+external int cefTextureBrowserCefInitializeWithOptions(
   ffi.Pointer<ffi.Char> runtimeDirectory,
   ffi.Pointer<ffi.Char> initialUrl,
   int transport,
 );
 
-@ffi.Native<ffi.Int32 Function()>(symbol: 'zikzak_cef_pump')
-external int zikzakCefPump();
-
-@ffi.Native<ffi.Uint64 Function()>(symbol: 'zikzak_cef_accelerated_paint_count')
-external int zikzakCefAcceleratedPaintCount();
+@ffi.Native<ffi.Int32 Function()>(symbol: 'cef_texture_browser_cef_pump')
+external int cefTextureBrowserCefPump();
 
 @ffi.Native<ffi.Uint64 Function()>(
-  symbol: 'zikzak_cef_accelerated_valid_paint_count',
+  symbol: 'cef_texture_browser_cef_accelerated_paint_count',
 )
-external int zikzakCefAcceleratedValidPaintCount();
+external int cefTextureBrowserCefAcceleratedPaintCount();
 
-@ffi.Native<ffi.Uint32 Function()>(symbol: 'zikzak_cef_accelerated_plane_count')
-external int zikzakCefAcceleratedPlaneCount();
-
-@ffi.Native<ffi.Uint32 Function()>(symbol: 'zikzak_cef_accelerated_format')
-external int zikzakCefAcceleratedFormat();
-
-@ffi.Native<ffi.Uint64 Function()>(symbol: 'zikzak_cef_accelerated_modifier')
-external int zikzakCefAcceleratedModifier();
-
-@ffi.Native<ffi.Int32 Function()>(symbol: 'zikzak_cef_accelerated_coded_width')
-external int zikzakCefAcceleratedCodedWidth();
-
-@ffi.Native<ffi.Int32 Function()>(symbol: 'zikzak_cef_accelerated_coded_height')
-external int zikzakCefAcceleratedCodedHeight();
-
-@ffi.Native<ffi.Int32 Function()>(
-  symbol: 'zikzak_cef_accelerated_visible_width',
+@ffi.Native<ffi.Uint64 Function()>(
+  symbol: 'cef_texture_browser_cef_accelerated_valid_paint_count',
 )
-external int zikzakCefAcceleratedVisibleWidth();
-
-@ffi.Native<ffi.Int32 Function()>(
-  symbol: 'zikzak_cef_accelerated_visible_height',
-)
-external int zikzakCefAcceleratedVisibleHeight();
+external int cefTextureBrowserCefAcceleratedValidPaintCount();
 
 @ffi.Native<ffi.Uint32 Function()>(
-  symbol: 'zikzak_cef_accelerated_first_plane_stride',
+  symbol: 'cef_texture_browser_cef_accelerated_plane_count',
 )
-external int zikzakCefAcceleratedFirstPlaneStride();
+external int cefTextureBrowserCefAcceleratedPlaneCount();
 
-@ffi.Native<ffi.Uint64 Function()>(symbol: 'zikzak_cef_dma_buf_generation')
-external int zikzakCefDmaBufGeneration();
+@ffi.Native<ffi.Uint32 Function()>(
+  symbol: 'cef_texture_browser_cef_accelerated_format',
+)
+external int cefTextureBrowserCefAcceleratedFormat();
 
-@ffi.Native<ffi.Uint64 Function()>(symbol: 'zikzak_cef_frame_generation')
-external int zikzakCefFrameGeneration();
+@ffi.Native<ffi.Uint64 Function()>(
+  symbol: 'cef_texture_browser_cef_accelerated_modifier',
+)
+external int cefTextureBrowserCefAcceleratedModifier();
 
-@ffi.Native<ffi.Uint32 Function()>(symbol: 'zikzak_cef_frame_width')
-external int zikzakCefFrameWidth();
+@ffi.Native<ffi.Int32 Function()>(
+  symbol: 'cef_texture_browser_cef_accelerated_coded_width',
+)
+external int cefTextureBrowserCefAcceleratedCodedWidth();
 
-@ffi.Native<ffi.Uint32 Function()>(symbol: 'zikzak_cef_frame_height')
-external int zikzakCefFrameHeight();
+@ffi.Native<ffi.Int32 Function()>(
+  symbol: 'cef_texture_browser_cef_accelerated_coded_height',
+)
+external int cefTextureBrowserCefAcceleratedCodedHeight();
 
-@ffi.Native<ffi.Size Function()>(symbol: 'zikzak_cef_frame_byte_length')
-external int zikzakCefFrameByteLength();
+@ffi.Native<ffi.Int32 Function()>(
+  symbol: 'cef_texture_browser_cef_accelerated_visible_width',
+)
+external int cefTextureBrowserCefAcceleratedVisibleWidth();
+
+@ffi.Native<ffi.Int32 Function()>(
+  symbol: 'cef_texture_browser_cef_accelerated_visible_height',
+)
+external int cefTextureBrowserCefAcceleratedVisibleHeight();
+
+@ffi.Native<ffi.Uint32 Function()>(
+  symbol: 'cef_texture_browser_cef_accelerated_first_plane_stride',
+)
+external int cefTextureBrowserCefAcceleratedFirstPlaneStride();
+
+@ffi.Native<ffi.Uint64 Function()>(
+  symbol: 'cef_texture_browser_cef_dma_buf_generation',
+)
+external int cefTextureBrowserCefDmaBufGeneration();
+
+@ffi.Native<ffi.Uint64 Function()>(
+  symbol: 'cef_texture_browser_cef_frame_generation',
+)
+external int cefTextureBrowserCefFrameGeneration();
+
+@ffi.Native<ffi.Uint32 Function()>(
+  symbol: 'cef_texture_browser_cef_frame_width',
+)
+external int cefTextureBrowserCefFrameWidth();
+
+@ffi.Native<ffi.Uint32 Function()>(
+  symbol: 'cef_texture_browser_cef_frame_height',
+)
+external int cefTextureBrowserCefFrameHeight();
+
+@ffi.Native<ffi.Size Function()>(
+  symbol: 'cef_texture_browser_cef_frame_byte_length',
+)
+external int cefTextureBrowserCefFrameByteLength();
 
 @ffi.Native<ffi.Int32 Function(ffi.Pointer<ffi.Uint8>, ffi.Size)>(
-  symbol: 'zikzak_cef_copy_latest_frame',
+  symbol: 'cef_texture_browser_cef_copy_latest_frame',
 )
-external int zikzakCefCopyLatestFrame(
+external int cefTextureBrowserCefCopyLatestFrame(
   ffi.Pointer<ffi.Uint8> destination,
   int destinationLength,
 );
 
 @ffi.Native<ffi.Int32 Function(ffi.Pointer<ffi.Char>)>(
-  symbol: 'zikzak_cef_navigate',
+  symbol: 'cef_texture_browser_cef_navigate',
 )
-external int zikzakCefNavigate(ffi.Pointer<ffi.Char> url);
+external int cefTextureBrowserCefNavigate(ffi.Pointer<ffi.Char> url);
 
 @ffi.Native<ffi.Int32 Function(ffi.Uint32, ffi.Uint32, ffi.Float)>(
-  symbol: 'zikzak_cef_resize',
+  symbol: 'cef_texture_browser_cef_resize',
 )
-external int zikzakCefResize(
+external int cefTextureBrowserCefResize(
   int logicalWidth,
   int logicalHeight,
   double deviceScaleFactor,
 );
 
-@ffi.Native<ffi.Int32 Function(ffi.Int32)>(symbol: 'zikzak_cef_set_focus')
-external int zikzakCefSetFocus(int focused);
+@ffi.Native<ffi.Int32 Function(ffi.Int32)>(
+  symbol: 'cef_texture_browser_cef_set_focus',
+)
+external int cefTextureBrowserCefSetFocus(int focused);
 
-@ffi.Native<ffi.Int32 Function(ffi.Int32)>(symbol: 'zikzak_cef_set_visibility')
-external int zikzakCefSetVisibility(int visible);
+@ffi.Native<ffi.Int32 Function(ffi.Int32)>(
+  symbol: 'cef_texture_browser_cef_set_visibility',
+)
+external int cefTextureBrowserCefSetVisibility(int visible);
 
 @ffi.Native<ffi.Int32 Function(ffi.Int32, ffi.Int32, ffi.Uint32, ffi.Int32)>(
-  symbol: 'zikzak_cef_send_mouse_move',
+  symbol: 'cef_texture_browser_cef_send_mouse_move',
 )
-external int zikzakCefSendMouseMove(
+external int cefTextureBrowserCefSendMouseMove(
   int x,
   int y,
   int modifiers,
@@ -212,8 +254,8 @@ external int zikzakCefSendMouseMove(
     ffi.Int32,
     ffi.Int32,
   )
->(symbol: 'zikzak_cef_send_mouse_button')
-external int zikzakCefSendMouseButton(
+>(symbol: 'cef_texture_browser_cef_send_mouse_button')
+external int cefTextureBrowserCefSendMouseButton(
   int x,
   int y,
   int modifiers,
@@ -224,8 +266,8 @@ external int zikzakCefSendMouseButton(
 
 @ffi.Native<
   ffi.Int32 Function(ffi.Int32, ffi.Int32, ffi.Uint32, ffi.Int32, ffi.Int32)
->(symbol: 'zikzak_cef_send_mouse_wheel')
-external int zikzakCefSendMouseWheel(
+>(symbol: 'cef_texture_browser_cef_send_mouse_wheel')
+external int cefTextureBrowserCefSendMouseWheel(
   int x,
   int y,
   int modifiers,
@@ -242,8 +284,8 @@ external int zikzakCefSendMouseWheel(
     ffi.Uint32,
     ffi.Uint32,
   )
->(symbol: 'zikzak_cef_send_key')
-external int zikzakCefSendKey(
+>(symbol: 'cef_texture_browser_cef_send_key')
+external int cefTextureBrowserCefSendKey(
   int eventType,
   int modifiers,
   int windowsKeyCode,

@@ -32,27 +32,27 @@ pub(crate) static FLUTTER_TEXTURE_DMA_BUF_MAX_COPY_MICROS: AtomicU64 = AtomicU64
 pub(crate) static FLUTTER_TEXTURE_DMA_BUF_FENCE_FALLBACK_COUNT: AtomicU64 = AtomicU64::new(0);
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zikzak_api_version() -> u32 {
+pub extern "C" fn cef_texture_browser_api_version() -> u32 {
     API_VERSION
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zikzak_frame_width() -> u32 {
+pub extern "C" fn cef_texture_browser_frame_width() -> u32 {
     WIDTH as u32
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zikzak_frame_height() -> u32 {
+pub extern "C" fn cef_texture_browser_frame_height() -> u32 {
     HEIGHT as u32
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zikzak_frame_byte_length() -> usize {
+pub extern "C" fn cef_texture_browser_frame_byte_length() -> usize {
     FRAME_BYTE_LENGTH
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zikzak_flutter_texture_initialize(engine_handle: i64) -> i32 {
+pub extern "C" fn cef_texture_browser_flutter_texture_initialize(engine_handle: i64) -> i32 {
     #[cfg(target_os = "linux")]
     {
         linux_texture::initialize(engine_handle)
@@ -65,9 +65,9 @@ pub extern "C" fn zikzak_flutter_texture_initialize(engine_handle: i64) -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zikzak_native_shutdown() -> i32 {
+pub extern "C" fn cef_texture_browser_native_shutdown() -> i32 {
     #[cfg(feature = "cef-runtime")]
-    let cef_status = cef_runtime::zikzak_cef_shutdown();
+    let cef_status = cef_runtime::cef_texture_browser_cef_shutdown();
     #[cfg(not(feature = "cef-runtime"))]
     let cef_status = 1;
 
@@ -84,12 +84,12 @@ pub extern "C" fn zikzak_native_shutdown() -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zikzak_flutter_texture_id() -> i64 {
+pub extern "C" fn cef_texture_browser_flutter_texture_id() -> i64 {
     FLUTTER_TEXTURE_ID.load(Ordering::Acquire)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zikzak_flutter_texture_resize(width: u32, height: u32) -> i32 {
+pub extern "C" fn cef_texture_browser_flutter_texture_resize(width: u32, height: u32) -> i32 {
     if checked_dynamic_frame_byte_length(width, height).is_none() {
         return -1;
     }
@@ -102,22 +102,22 @@ pub extern "C" fn zikzak_flutter_texture_resize(width: u32, height: u32) -> i32 
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zikzak_flutter_texture_width() -> u32 {
+pub extern "C" fn cef_texture_browser_flutter_texture_width() -> u32 {
     FLUTTER_TEXTURE_WIDTH.load(Ordering::Acquire)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zikzak_flutter_texture_height() -> u32 {
+pub extern "C" fn cef_texture_browser_flutter_texture_height() -> u32 {
     FLUTTER_TEXTURE_HEIGHT.load(Ordering::Acquire)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zikzak_flutter_texture_generation() -> u64 {
+pub extern "C" fn cef_texture_browser_flutter_texture_generation() -> u64 {
     FLUTTER_TEXTURE_GENERATION.load(Ordering::Acquire)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zikzak_flutter_texture_request_frame() -> i32 {
+pub extern "C" fn cef_texture_browser_flutter_texture_request_frame() -> i32 {
     #[cfg(target_os = "linux")]
     {
         linux_texture::mark_frame_available()
@@ -130,51 +130,51 @@ pub extern "C" fn zikzak_flutter_texture_request_frame() -> i32 {
 
 #[cfg(feature = "cef-runtime")]
 pub(crate) fn notify_flutter_texture_frame() -> i32 {
-    zikzak_flutter_texture_request_frame()
+    cef_texture_browser_flutter_texture_request_frame()
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zikzak_flutter_texture_dma_buf_generation() -> u64 {
+pub extern "C" fn cef_texture_browser_flutter_texture_dma_buf_generation() -> u64 {
     FLUTTER_TEXTURE_DMA_BUF_GENERATION.load(Ordering::Acquire)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zikzak_flutter_texture_dma_buf_status() -> i32 {
+pub extern "C" fn cef_texture_browser_flutter_texture_dma_buf_status() -> i32 {
     FLUTTER_TEXTURE_DMA_BUF_STATUS.load(Ordering::Acquire) as i32
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zikzak_flutter_texture_dma_buf_copy_count() -> u64 {
+pub extern "C" fn cef_texture_browser_flutter_texture_dma_buf_copy_count() -> u64 {
     FLUTTER_TEXTURE_DMA_BUF_COPY_COUNT.load(Ordering::Acquire)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zikzak_flutter_texture_dma_buf_last_copy_micros() -> u64 {
+pub extern "C" fn cef_texture_browser_flutter_texture_dma_buf_last_copy_micros() -> u64 {
     FLUTTER_TEXTURE_DMA_BUF_LAST_COPY_MICROS.load(Ordering::Acquire)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zikzak_flutter_texture_dma_buf_max_copy_micros() -> u64 {
+pub extern "C" fn cef_texture_browser_flutter_texture_dma_buf_max_copy_micros() -> u64 {
     FLUTTER_TEXTURE_DMA_BUF_MAX_COPY_MICROS.load(Ordering::Acquire)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zikzak_flutter_texture_dma_buf_fence_fallback_count() -> u64 {
+pub extern "C" fn cef_texture_browser_flutter_texture_dma_buf_fence_fallback_count() -> u64 {
     FLUTTER_TEXTURE_DMA_BUF_FENCE_FALLBACK_COUNT.load(Ordering::Acquire)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zikzak_flutter_texture_gl_name() -> u32 {
+pub extern "C" fn cef_texture_browser_flutter_texture_gl_name() -> u32 {
     FLUTTER_TEXTURE_GL_NAME.load(Ordering::Acquire)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zikzak_flutter_texture_egl_display() -> usize {
+pub extern "C" fn cef_texture_browser_flutter_texture_egl_display() -> usize {
     FLUTTER_TEXTURE_EGL_DISPLAY.load(Ordering::Acquire)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zikzak_flutter_texture_egl_context() -> usize {
+pub extern "C" fn cef_texture_browser_flutter_texture_egl_context() -> usize {
     FLUTTER_TEXTURE_EGL_CONTEXT.load(Ordering::Acquire)
 }
 
@@ -185,7 +185,7 @@ pub extern "C" fn zikzak_flutter_texture_egl_context() -> usize {
 ///
 /// `destination` must point to at least `destination_length` writable bytes and
 /// remain valid for the duration of this call.
-pub unsafe extern "C" fn zikzak_flutter_texture_render_test_frame(
+pub unsafe extern "C" fn cef_texture_browser_flutter_texture_render_test_frame(
     destination: *mut u8,
     destination_length: usize,
     width: u32,
@@ -259,7 +259,7 @@ fn render_flutter_texture_test_frame(
 /// `destination` must point to at least `destination_length` writable bytes and
 /// remain valid for the duration of this call.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn zikzak_render_test_frame(
+pub unsafe extern "C" fn cef_texture_browser_render_test_frame(
     destination: *mut u8,
     destination_length: usize,
     frame_number: u64,
@@ -408,17 +408,19 @@ mod tests {
     #[test]
     fn renders_a_complete_non_empty_frame() {
         let mut pixels = vec![0; FRAME_BYTE_LENGTH];
-        let result = unsafe { zikzak_render_test_frame(pixels.as_mut_ptr(), pixels.len(), 30) };
+        let result =
+            unsafe { cef_texture_browser_render_test_frame(pixels.as_mut_ptr(), pixels.len(), 30) };
 
         assert_eq!(result, 0);
         assert!(pixels.iter().any(|component| *component != 0));
-        assert_eq!(pixels.len(), zikzak_frame_byte_length());
+        assert_eq!(pixels.len(), cef_texture_browser_frame_byte_length());
     }
 
     #[test]
     fn rejects_a_short_destination() {
         let mut pixels = vec![0; FRAME_BYTE_LENGTH - 1];
-        let result = unsafe { zikzak_render_test_frame(pixels.as_mut_ptr(), pixels.len(), 0) };
+        let result =
+            unsafe { cef_texture_browser_render_test_frame(pixels.as_mut_ptr(), pixels.len(), 0) };
 
         assert_eq!(result, -2);
     }
@@ -428,7 +430,13 @@ mod tests {
         let length = checked_dynamic_frame_byte_length(97, 53).unwrap();
         let mut pixels = vec![0; length];
         let result = unsafe {
-            zikzak_flutter_texture_render_test_frame(pixels.as_mut_ptr(), pixels.len(), 97, 53, 7)
+            cef_texture_browser_flutter_texture_render_test_frame(
+                pixels.as_mut_ptr(),
+                pixels.len(),
+                97,
+                53,
+                7,
+            )
         };
 
         assert_eq!(result, 0);
@@ -440,10 +448,12 @@ mod tests {
     #[test]
     fn rejects_invalid_dynamic_flutter_texture_frames() {
         let mut byte = 0_u8;
-        let result = unsafe { zikzak_flutter_texture_render_test_frame(&mut byte, 1, 0, 1, 0) };
+        let result =
+            unsafe { cef_texture_browser_flutter_texture_render_test_frame(&mut byte, 1, 0, 1, 0) };
         assert_eq!(result, -2);
 
-        let result = unsafe { zikzak_flutter_texture_render_test_frame(&mut byte, 1, 2, 2, 0) };
+        let result =
+            unsafe { cef_texture_browser_flutter_texture_render_test_frame(&mut byte, 1, 2, 2, 0) };
         assert_eq!(result, -3);
     }
 }

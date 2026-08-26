@@ -2,7 +2,7 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:zikzak_inappwebview_latest_probe/main.dart';
+import 'package:cef_texture_browser/main.dart';
 
 void main() {
   testWidgets('Rust native frame reaches the Flutter surface', (tester) async {

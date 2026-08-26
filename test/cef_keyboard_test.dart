@@ -2,7 +2,7 @@
 
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:zikzak_inappwebview_latest_probe/src/cef_keyboard.dart';
+import 'package:cef_texture_browser/src/cef_keyboard.dart';
 
 void main() {
   test('maps DOM-compatible Windows key codes', () {

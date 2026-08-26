@@ -8,7 +8,7 @@ fn main() -> std::process::ExitCode {
     let exit_code = execute_process(Some(args.as_main_args()), None, std::ptr::null_mut());
 
     if exit_code < 0 {
-        eprintln!("zikzak_cef_helper was launched without a CEF process type");
+        eprintln!("cef_texture_browser_helper was launched without a CEF process type");
         return std::process::ExitCode::FAILURE;
     }
 

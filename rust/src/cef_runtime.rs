@@ -365,7 +365,7 @@ wrap_app! {
 
 impl AppBuilder {
     fn build(accelerated: bool) -> App {
-        let override_value = std::env::var("ZIKZAK_CEF_OZONE_PLATFORM").ok();
+        let override_value = std::env::var("CEF_TEXTURE_BROWSER_OZONE_PLATFORM").ok();
         let session_type = std::env::var("XDG_SESSION_TYPE").ok();
         let ozone_platform = select_ozone_platform(
             override_value.as_deref(),
@@ -428,15 +428,15 @@ fn checked_frame_byte_length(width: i32, height: i32) -> Option<usize> {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zikzak_cef_initialize(
+pub extern "C" fn cef_texture_browser_cef_initialize(
     runtime_directory: *const c_char,
     initial_url: *const c_char,
 ) -> i32 {
-    zikzak_cef_initialize_with_options(runtime_directory, initial_url, 0)
+    cef_texture_browser_cef_initialize_with_options(runtime_directory, initial_url, 0)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zikzak_cef_initialize_with_options(
+pub extern "C" fn cef_texture_browser_cef_initialize_with_options(
     runtime_directory: *const c_char,
     initial_url: *const c_char,
     transport: u32,
@@ -459,7 +459,7 @@ pub extern "C" fn zikzak_cef_initialize_with_options(
     }
     DMA_BUF_GENERATION.store(0, Ordering::Release);
 
-    let helper_path = runtime_directory.join("zikzak_cef_helper");
+    let helper_path = runtime_directory.join("cef_texture_browser_helper");
     let locales_path = runtime_directory.join("locales");
     let libcef_path = runtime_directory.join("libcef.so");
     if !helper_path.is_file() || !locales_path.is_dir() || !libcef_path.is_file() {
@@ -478,7 +478,8 @@ pub extern "C" fn zikzak_cef_initialize_with_options(
         return -4;
     }
 
-    let cache_path = std::env::temp_dir().join(format!("zikzak-cef-cache-{}", std::process::id()));
+    let cache_path =
+        std::env::temp_dir().join(format!("cef-texture-browser-cache-{}", std::process::id()));
     let _ = std::fs::create_dir_all(&cache_path);
     let settings = cef::Settings {
         no_sandbox: true as _,
@@ -552,7 +553,7 @@ pub extern "C" fn zikzak_cef_initialize_with_options(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zikzak_cef_shutdown() -> i32 {
+pub extern "C" fn cef_texture_browser_cef_shutdown() -> i32 {
     let Some((browser, browser_closed)) = RUNTIME.with_borrow(|runtime| {
         runtime
             .as_ref()
@@ -584,7 +585,7 @@ pub extern "C" fn zikzak_cef_shutdown() -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zikzak_cef_pump() -> i32 {
+pub extern "C" fn cef_texture_browser_cef_pump() -> i32 {
     if !RUNTIME.with_borrow(|runtime| runtime.is_some()) {
         return -1;
     }
@@ -610,62 +611,62 @@ fn accelerated_stat<T: Default>(read: impl FnOnce(&AcceleratedPaintSnapshot) -> 
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zikzak_cef_accelerated_paint_count() -> u64 {
+pub extern "C" fn cef_texture_browser_cef_accelerated_paint_count() -> u64 {
     accelerated_stat(|snapshot| snapshot.paint_count)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zikzak_cef_accelerated_valid_paint_count() -> u64 {
+pub extern "C" fn cef_texture_browser_cef_accelerated_valid_paint_count() -> u64 {
     accelerated_stat(|snapshot| snapshot.valid_paint_count)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zikzak_cef_accelerated_plane_count() -> u32 {
+pub extern "C" fn cef_texture_browser_cef_accelerated_plane_count() -> u32 {
     accelerated_stat(|snapshot| snapshot.plane_count)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zikzak_cef_accelerated_format() -> u32 {
+pub extern "C" fn cef_texture_browser_cef_accelerated_format() -> u32 {
     accelerated_stat(|snapshot| snapshot.format)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zikzak_cef_accelerated_modifier() -> u64 {
+pub extern "C" fn cef_texture_browser_cef_accelerated_modifier() -> u64 {
     accelerated_stat(|snapshot| snapshot.modifier)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zikzak_cef_accelerated_coded_width() -> i32 {
+pub extern "C" fn cef_texture_browser_cef_accelerated_coded_width() -> i32 {
     accelerated_stat(|snapshot| snapshot.coded_width)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zikzak_cef_accelerated_coded_height() -> i32 {
+pub extern "C" fn cef_texture_browser_cef_accelerated_coded_height() -> i32 {
     accelerated_stat(|snapshot| snapshot.coded_height)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zikzak_cef_accelerated_visible_width() -> i32 {
+pub extern "C" fn cef_texture_browser_cef_accelerated_visible_width() -> i32 {
     accelerated_stat(|snapshot| snapshot.visible_width)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zikzak_cef_accelerated_visible_height() -> i32 {
+pub extern "C" fn cef_texture_browser_cef_accelerated_visible_height() -> i32 {
     accelerated_stat(|snapshot| snapshot.visible_height)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zikzak_cef_accelerated_first_plane_stride() -> u32 {
+pub extern "C" fn cef_texture_browser_cef_accelerated_first_plane_stride() -> u32 {
     accelerated_stat(|snapshot| snapshot.first_plane_stride)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zikzak_cef_dma_buf_generation() -> u64 {
+pub extern "C" fn cef_texture_browser_cef_dma_buf_generation() -> u64 {
     DMA_BUF_GENERATION.load(Ordering::Acquire)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zikzak_cef_frame_generation() -> u64 {
+pub extern "C" fn cef_texture_browser_cef_frame_generation() -> u64 {
     RUNTIME.with_borrow(|runtime| {
         runtime
             .as_ref()
@@ -675,7 +676,7 @@ pub extern "C" fn zikzak_cef_frame_generation() -> u64 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zikzak_cef_frame_width() -> u32 {
+pub extern "C" fn cef_texture_browser_cef_frame_width() -> u32 {
     RUNTIME.with_borrow(|runtime| {
         runtime
             .as_ref()
@@ -685,7 +686,7 @@ pub extern "C" fn zikzak_cef_frame_width() -> u32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zikzak_cef_frame_height() -> u32 {
+pub extern "C" fn cef_texture_browser_cef_frame_height() -> u32 {
     RUNTIME.with_borrow(|runtime| {
         runtime
             .as_ref()
@@ -695,7 +696,7 @@ pub extern "C" fn zikzak_cef_frame_height() -> u32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zikzak_cef_frame_byte_length() -> usize {
+pub extern "C" fn cef_texture_browser_cef_frame_byte_length() -> usize {
     RUNTIME.with_borrow(|runtime| {
         runtime
             .as_ref()
@@ -705,7 +706,7 @@ pub extern "C" fn zikzak_cef_frame_byte_length() -> usize {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn zikzak_cef_copy_latest_frame(
+pub unsafe extern "C" fn cef_texture_browser_cef_copy_latest_frame(
     destination: *mut u8,
     destination_length: usize,
 ) -> i32 {
@@ -736,7 +737,7 @@ pub unsafe extern "C" fn zikzak_cef_copy_latest_frame(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zikzak_cef_navigate(url: *const c_char) -> i32 {
+pub extern "C" fn cef_texture_browser_cef_navigate(url: *const c_char) -> i32 {
     let url = match required_c_string(url) {
         Ok(value) => value,
         Err(status) => return status,
@@ -755,7 +756,7 @@ pub extern "C" fn zikzak_cef_navigate(url: *const c_char) -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zikzak_cef_resize(
+pub extern "C" fn cef_texture_browser_cef_resize(
     logical_width: u32,
     logical_height: u32,
     device_scale_factor: f32,
@@ -801,7 +802,7 @@ pub extern "C" fn zikzak_cef_resize(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zikzak_cef_set_focus(focused: i32) -> i32 {
+pub extern "C" fn cef_texture_browser_cef_set_focus(focused: i32) -> i32 {
     RUNTIME.with_borrow(|runtime| {
         let Some(host) = runtime.as_ref().and_then(|runtime| runtime.browser.host()) else {
             return -3;
@@ -812,7 +813,7 @@ pub extern "C" fn zikzak_cef_set_focus(focused: i32) -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zikzak_cef_set_visibility(visible: i32) -> i32 {
+pub extern "C" fn cef_texture_browser_cef_set_visibility(visible: i32) -> i32 {
     RUNTIME.with_borrow(|runtime| {
         let Some(host) = runtime.as_ref().and_then(|runtime| runtime.browser.host()) else {
             return -3;
@@ -827,7 +828,7 @@ fn mouse_event(x: i32, y: i32, modifiers: u32) -> MouseEvent {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zikzak_cef_send_mouse_move(
+pub extern "C" fn cef_texture_browser_cef_send_mouse_move(
     x: i32,
     y: i32,
     modifiers: u32,
@@ -846,7 +847,7 @@ pub extern "C" fn zikzak_cef_send_mouse_move(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zikzak_cef_send_mouse_button(
+pub extern "C" fn cef_texture_browser_cef_send_mouse_button(
     x: i32,
     y: i32,
     modifiers: u32,
@@ -878,7 +879,7 @@ pub extern "C" fn zikzak_cef_send_mouse_button(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zikzak_cef_send_mouse_wheel(
+pub extern "C" fn cef_texture_browser_cef_send_mouse_wheel(
     x: i32,
     y: i32,
     modifiers: u32,
@@ -895,7 +896,7 @@ pub extern "C" fn zikzak_cef_send_mouse_wheel(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zikzak_cef_send_key(
+pub extern "C" fn cef_texture_browser_cef_send_key(
     event_type: u32,
     modifiers: u32,
     windows_key_code: i32,

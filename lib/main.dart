@@ -42,7 +42,7 @@ class ProbeApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'Rust browser surface probe',
+      title: 'CEF Texture Browser',
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(
           seedColor: const Color(0xff695de9),
@@ -196,7 +196,7 @@ class _ProbePageState extends State<ProbePage> with WidgetsBindingObserver {
   Widget build(BuildContext context) {
     final renderer = _renderer;
     return Scaffold(
-      appBar: AppBar(title: const Text('Rust FFI browser-surface probe')),
+      appBar: AppBar(title: const Text('CEF Texture Browser')),
       body: Padding(
         padding: const EdgeInsets.all(20),
         child: Column(

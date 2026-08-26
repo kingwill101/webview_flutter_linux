@@ -2,6 +2,30 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+//! Per-view Flutter texture transport for Linux.
+//!
+//! A [`TextureState`] is created for each native WebView handle. It registers
+//! one Irondash `FlTextureGL` with the Flutter engine and owns a three-slot GL
+//! ring. WPE delivers borrowed DMA-BUFs on the platform thread; this module
+//! waits for the producer fence, imports the planes into EGL, copies the image
+//! into the next application-owned slot, then returns before WPE releases the
+//! buffer. Flutter therefore never samples a texture still owned by WebKit.
+//!
+//! The Irondash payload callback runs on Flutter's raster thread. Shared scalar
+//! state lives in [`TextureMetrics`] atomics and mutable GL resources live
+//! behind the provider mutex. WPE/GLib objects never enter this module.
+//!
+//! ## GL ownership invariants
+//!
+//! - Texture names are created in Flutter's share group by the raster callback.
+//! - DMA-BUF copies use a private surfaceless context sharing that group.
+//! - The caller's EGL display, context, draw/read surfaces, and API are restored
+//!   before a copy returns.
+//! - A WPE buffer is only borrowed for the synchronous duration of
+//!   [`TextureState::copy_dma_buf`]; file descriptors are never closed here.
+//! - Published slots are application-owned and rotate only after a completed
+//!   copy and fence wait.
+
 use std::{
     ffi::{c_char, c_void},
     ptr,
@@ -112,6 +136,12 @@ const EGL_DMA_BUF_PLANE_MODIFIER_HI_ATTRIBUTES: [i32; 4] = [
 const COPY_FENCE_TIMEOUT_NS: u64 = 16_000_000;
 const TEXTURE_SLOT_COUNT: usize = 3;
 
+/// Cross-thread scalar state for one Flutter texture.
+///
+/// WPE-side code updates dimensions and copy diagnostics on the platform
+/// thread. The Irondash provider reads them on the raster thread. Acquire and
+/// release ordering makes a newly published GL name/dimension visible without
+/// moving the thread-affine browser objects across threads.
 pub(crate) struct TextureMetrics {
     id: AtomicI64,
     width: AtomicU32,
@@ -239,22 +269,46 @@ unsafe extern "C" {
 }
 
 #[derive(Clone, Copy)]
+/// Borrowed description of one WPE DMA-BUF frame.
+///
+/// The file descriptors remain owned by WPE. They are valid only while the
+/// `buffer-rendered` callback is active and must not be closed, duplicated into
+/// long-lived state, or accessed after the callback releases the buffer.
 pub(crate) struct DmaBufFrame {
+    /// Monotonic generation assigned by the owning native view.
     pub generation: u64,
+    /// Number of populated entries in `fds`, `strides`, and `offsets`.
     pub plane_count: u32,
+    /// Borrowed plane file descriptors; unused entries contain `-1`.
     pub fds: [i32; 4],
+    /// Plane row strides in bytes.
     pub strides: [u32; 4],
+    /// Plane byte offsets from the start of each DMA-BUF.
     pub offsets: [u64; 4],
+    /// DRM format modifier shared by the planes.
     pub modifier: u64,
+    /// DRM fourcc supplied by WPE, or the WPE legacy zero/one aliases.
     pub format: u32,
+    /// Full buffer width allocated by the producer.
     pub coded_width: i32,
+    /// Full buffer height allocated by the producer.
     pub coded_height: i32,
+    /// X origin of the visible rectangle.
     pub visible_x: i32,
+    /// Y origin of the visible rectangle.
     pub visible_y: i32,
+    /// Width copied into the Flutter texture.
     pub visible_width: i32,
+    /// Height copied into the Flutter texture.
     pub visible_height: i32,
 }
 
+/// Raster-thread GL resources for one texture provider.
+///
+/// `names` belong to Flutter's GL share group. `copy_context` is created lazily
+/// from the raster callback's current context, then used synchronously by WPE
+/// frame callbacks. `published_slot` always identifies the last completely
+/// copied texture, never the slot currently being written.
 struct GlState {
     names: [u32; TEXTURE_SLOT_COUNT],
     published_slot: usize,
@@ -286,10 +340,18 @@ impl Default for GlState {
 }
 
 impl GlState {
+    /// Returns the GL name currently safe for Flutter to sample.
     fn published_name(&self) -> u32 {
         self.names[self.published_slot]
     }
 
+    /// Lazily creates the surfaceless context used for DMA-BUF copies.
+    ///
+    /// # Safety
+    ///
+    /// Flutter's raster EGL context must be current on the calling thread. The
+    /// returned context shares its object namespace with that Flutter context.
+    /// No context/surface pointers are retained except as opaque owned handles.
     unsafe fn ensure_copy_context(&mut self) -> bool {
         if self.copy_context != 0 {
             return true;
@@ -345,6 +407,15 @@ impl GlState {
         true
     }
 
+    /// Produces the payload returned to Flutter for the next raster frame.
+    ///
+    /// The method allocates the three application-owned textures on first use,
+    /// reallocates them after a size generation change, and uploads the
+    /// diagnostic fallback until WPE successfully imports a browser frame.
+    ///
+    /// # Safety
+    ///
+    /// Called only by Irondash while Flutter's raster GL context is current.
     unsafe fn populate(&mut self, metrics: &TextureMetrics) -> Result<TextureSnapshot, i32> {
         let width = metrics.width.load(Ordering::Acquire);
         let height = metrics.height.load(Ordering::Acquire);
@@ -450,12 +521,18 @@ impl Drop for GlState {
                 );
             }
         }
-        // Flutter's GL context is not guaranteed to be current during drop;
-        // its share group reclaims the names when the engine is destroyed.
+        // Flutter's GL context is not guaranteed to be current during drop.
+        // Calling glDeleteTextures here would therefore be undefined. The
+        // engine/share-group teardown reclaims these names after unregistering
+        // the Irondash texture.
         self.names = [0; TEXTURE_SLOT_COUNT];
     }
 }
 
+/// Irondash payload provider shared with Flutter's raster thread.
+///
+/// The provider outlives individual payload snapshots. Its mutex serializes
+/// texture allocation/readout with platform-thread DMA-BUF copies.
 struct TextureProvider {
     state: Mutex<GlState>,
     metrics: Arc<TextureMetrics>,
@@ -470,6 +547,10 @@ impl TextureProvider {
     }
 }
 
+/// Immutable payload handed to Flutter for a single texture lookup.
+///
+/// `GLTexture` borrows these fields only for the duration of Irondash's
+/// callback, so the snapshot can be allocated independently on every lookup.
 struct TextureSnapshot {
     name: u32,
     width: i32,
@@ -489,6 +570,8 @@ impl GLTextureProvider for TextureSnapshot {
 
 impl PayloadProvider<BoxedGLTexture> for TextureProvider {
     fn get_payload(&self) -> BoxedGLTexture {
+        // A poisoned/temporarily unavailable state lock must not unwind across
+        // Flutter's C callback. Reuse the last published values instead.
         let fallback = TextureSnapshot {
             name: self.metrics.gl_name.load(Ordering::Acquire),
             width: self.metrics.width.load(Ordering::Acquire) as i32,
@@ -503,6 +586,12 @@ impl PayloadProvider<BoxedGLTexture> for TextureProvider {
     }
 }
 
+/// Complete texture-side state associated with one native WebView handle.
+///
+/// The `Arc` returned by [`TextureState::new`] is owned by the platform-thread
+/// native view and by WPE signal closures while callbacks can still arrive.
+/// The Irondash texture holds the provider independently for raster callbacks.
+/// Shutdown unregisters the Flutter texture before resetting the GL provider.
 pub(crate) struct TextureState {
     metrics: Arc<TextureMetrics>,
     provider: Arc<TextureProvider>,
@@ -510,6 +599,11 @@ pub(crate) struct TextureState {
 }
 
 impl TextureState {
+    /// Registers a new GL texture with the Flutter engine.
+    ///
+    /// `engine_handle` is the opaque `FlEngine` handle supplied by
+    /// `irondash_engine_context`. Returns `-3` when registration fails and `-4`
+    /// when the engine returns a non-positive texture identifier.
     pub(crate) fn new(engine_handle: i64) -> Result<Arc<Self>, i32> {
         let metrics = Arc::new(TextureMetrics::default());
         let provider = Arc::new(TextureProvider::new(metrics.clone()));
@@ -529,26 +623,36 @@ impl TextureState {
         }))
     }
 
+    /// Returns Flutter's texture identifier, or zero after shutdown.
     pub(crate) fn id(&self) -> i64 {
         self.metrics.id.load(Ordering::Acquire)
     }
 
+    /// Returns the current physical texture width.
     pub(crate) fn width(&self) -> u32 {
         self.metrics.width.load(Ordering::Acquire)
     }
 
+    /// Returns the current physical texture height.
     pub(crate) fn height(&self) -> u32 {
         self.metrics.height.load(Ordering::Acquire)
     }
 
+    /// Returns the resize generation observed by the raster provider.
     pub(crate) fn generation(&self) -> u64 {
         self.metrics.generation.load(Ordering::Acquire)
     }
 
+    /// Returns the number of completed zero-copy-to-GPU frame copies.
     pub(crate) fn dma_buf_copy_count(&self) -> u64 {
         self.metrics.dma_buf_copy_count.load(Ordering::Acquire)
     }
 
+    /// Publishes a new physical size to the raster provider.
+    ///
+    /// The GL allocation occurs lazily on the raster thread. A generation is
+    /// advanced only when either dimension changes. Invalid or excessive
+    /// allocations return `-1` without changing the current size.
     pub(crate) fn resize(&self, width: u32, height: u32) -> i32 {
         if checked_dynamic_frame_byte_length(width, height).is_none() {
             return -1;
@@ -561,6 +665,11 @@ impl TextureState {
         0
     }
 
+    /// Unregisters this view's Flutter texture and resets its GL state.
+    ///
+    /// WPE signal closures must be disconnected/dropped before this method is
+    /// called. The operation is idempotent at the resource level, though the
+    /// public handle registry prevents a second call for the same handle.
     pub(crate) fn shutdown(&self) -> i32 {
         let Ok(mut texture) = self.texture.lock() else {
             return -2;
@@ -577,6 +686,9 @@ impl TextureState {
         0
     }
 
+    /// Tells Flutter that the texture has a newer payload to sample.
+    ///
+    /// Returns `-1` after shutdown and `-2` if the texture mutex is poisoned.
     pub(crate) fn mark_frame_available(&self) -> i32 {
         let texture = match self.texture.lock() {
             Ok(texture) => texture.clone(),
@@ -589,6 +701,12 @@ impl TextureState {
         0
     }
 
+    /// Imports and copies one borrowed WPE DMA-BUF into the next ring slot.
+    ///
+    /// The copy is synchronous: a successful return guarantees that the
+    /// source buffer may be released to WPE and the destination slot is safe
+    /// to publish. `-31` indicates that Flutter has not yet invoked the raster
+    /// provider, so no shared copy context/texture allocation exists.
     pub(crate) fn copy_dma_buf(&self, frame: &DmaBufFrame) -> i32 {
         let Ok(mut state) = self.provider.state.lock() else {
             self.publish_dma_buf_result(frame.generation, -2, 0, false);
@@ -610,6 +728,16 @@ impl TextureState {
 }
 
 impl TextureState {
+    /// Performs the bounded copy while preserving the caller's EGL state.
+    ///
+    /// A frame is written into the slot after `published_slot`; that slot only
+    /// becomes visible after import, blit, and GPU fence completion succeed.
+    ///
+    /// # Safety
+    ///
+    /// `state.copy_context` must be a live context owned by `state` and sharing
+    /// Flutter's texture namespace. Every DMA-BUF descriptor in `frame` must
+    /// remain valid until this function returns.
     unsafe fn copy_dma_buf_locked(&self, state: &mut GlState, frame: &DmaBufFrame) -> i32 {
         let previous_display = unsafe { eglGetCurrentDisplay() };
         let previous_context = unsafe { eglGetCurrentContext() };
@@ -711,6 +839,11 @@ impl TextureState {
         status
     }
 
+    /// Atomically publishes diagnostics for the most recent copy attempt.
+    ///
+    /// The copy count advances only on success; timing and status are retained
+    /// for failures so Dart-side diagnostics can distinguish “no frame yet”
+    /// from import/copy errors.
     fn publish_dma_buf_result(
         &self,
         generation: u64,
@@ -743,6 +876,18 @@ impl TextureState {
     }
 }
 
+/// Imports the borrowed planes as an EGL image and blits into a GL texture.
+///
+/// The function translates WPE's legacy zero/one format aliases to DRM fourcc,
+/// validates all plane metadata before constructing EGL attributes, and waits
+/// for a destination fence before destroying the temporary import objects.
+///
+/// # Safety
+///
+/// A compatible EGL context must be current; `destination_name` must name a
+/// texture in that context's share group; all populated frame file descriptors
+/// must remain valid for the complete call. This function never assumes
+/// ownership of those descriptors.
 unsafe fn copy_dma_buf_to_texture(
     frame: &DmaBufFrame,
     destination_name: u32,

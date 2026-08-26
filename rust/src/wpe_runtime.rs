@@ -2,6 +2,40 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+//! WPE WebKit runtime and C ABI for individual Linux WebViews.
+//!
+//! Each successful [`webview_flutter_linux_view_create`] call inserts one
+//! [`NativeView`] into the platform thread's `VIEWS` registry and returns a
+//! monotonically increasing, non-zero handle. Every later FFI function resolves
+//! that handle rather than dereferencing a Dart-owned pointer. Disposing a view
+//! removes it from the registry first, making stale or repeated calls fail
+//! without accessing released browser state.
+//!
+//! ## Thread affinity and callbacks
+//!
+//! GLib, WebKit, and WPE objects are not `Send`. The registry is therefore
+//! thread-local and all Dart calls must originate from Flutter's Linux platform
+//! thread. Signal closures capture `Weak<NativeView>` references: they cannot
+//! keep a disposed browser alive, and they can detect teardown before touching
+//! texture or menu state. Only [`crate::linux_texture::TextureState`] crosses
+//! to Flutter's raster thread through `Arc`, atomics, and mutexes.
+//!
+//! ## Buffer lifetime
+//!
+//! WPE owns every `WpeBuffer` and its DMA-BUF file descriptors. During
+//! `buffer-rendered`, this module waits for WPE's rendering fence, synchronously
+//! copies the borrowed planes into an application-owned GL ring, then calls
+//! `wpe_view_buffer_released` exactly once. No buffer pointer or borrowed file
+//! descriptor is retained after the callback.
+//!
+//! ## Return values
+//!
+//! Commands return `0` on success. Negative values identify invalid arguments,
+//! invalid handles, unavailable native objects, or lower-level WPE/texture
+//! failures. Accessors return zero (or `-1` where negative is representable)
+//! when a handle or requested value is unavailable. The Dart wrapper converts
+//! command failures into `StateError`s.
+
 use std::{
     cell::RefCell,
     collections::HashMap,
@@ -37,6 +71,10 @@ const WPE_MODIFIER_POINTER_BUTTON1: u32 = 1 << 8;
 const WPE_MODIFIER_POINTER_BUTTON2: u32 = 1 << 9;
 const WPE_MODIFIER_POINTER_BUTTON3: u32 = 1 << 10;
 
+// Opaque declarations for the WPE/WebKit/GIO types used by the hand-written
+// ABI. Rust never constructs or dereferences these zero-sized marker types; it
+// only passes pointers back to the library that created them. Ownership and
+// transfer annotations for individual calls are recorded at their call sites.
 #[repr(C)]
 struct WpeDisplay {
     _opaque: [u8; 0],
@@ -113,6 +151,9 @@ struct GVariant {
 }
 
 unsafe extern "C" {
+    // Constructors returning transfer-full GObjects are wrapped immediately in
+    // glib ownership or explicitly unref'd on failure. All `get_*` functions
+    // below return transfer-none pointers tied to their parent object.
     fn wpe_display_headless_new() -> *mut WpeDisplay;
     fn wpe_display_get_clipboard(display: *mut WpeDisplay) -> *mut WpeClipboard;
     fn wpe_clipboard_get_change_count(clipboard: *mut WpeClipboard) -> i64;
@@ -225,6 +266,10 @@ unsafe extern "C" {
     fn wpe_event_unref(event: *mut WpeEvent);
 }
 
+/// Strong owner for the WebKit object and its transfer-none WPE children.
+///
+/// `webview` keeps `view` and `toplevel` alive. The raw child pointers must
+/// never be used after the owning `glib::Object` is dropped.
 struct WpeRuntime {
     webview: glib::Object,
     view: *mut WpeView,
@@ -232,6 +277,10 @@ struct WpeRuntime {
 }
 
 #[derive(Default)]
+/// Per-view counters and latest-frame metadata exposed by diagnostic accessors.
+///
+/// Atomics let callbacks publish scalar state without retaining a borrow of the
+/// thread-local handle registry across a WPE or texture operation.
 struct WpeMetrics {
     frame_generation: AtomicU64,
     paint_count: AtomicU64,
@@ -245,6 +294,12 @@ struct WpeMetrics {
     context_menu_generation: AtomicU64,
 }
 
+/// Ownership root for one public native handle.
+///
+/// Browser/menu state uses `RefCell` because it remains platform-thread local.
+/// Texture state uses `Arc` because Irondash also retains it for raster-thread
+/// callbacks. The registry and signal closures share this object via `Rc` and
+/// `Weak`; the browser object itself never crosses threads.
 struct NativeView {
     runtime: RefCell<Option<WpeRuntime>>,
     context_menu: RefCell<Option<ContextMenuSnapshot>>,
@@ -252,12 +307,20 @@ struct NativeView {
     texture: std::sync::Arc<crate::linux_texture::TextureState>,
 }
 
+/// Flutter-readable copy of the current WebKit context menu.
+///
+/// Coordinates are physical WPE pixels; Dart converts them back to logical
+/// Flutter coordinates using the current device scale factor.
 struct ContextMenuSnapshot {
     x: f64,
     y: f64,
     items: Vec<ContextMenuItemSnapshot>,
 }
 
+/// One retained context-menu action.
+///
+/// The title is copied immediately. `action` and optional `target` receive
+/// native references so Flutter may activate them after WebKit's signal ends.
 struct ContextMenuItemSnapshot {
     title: Vec<u8>,
     is_separator: bool,
@@ -267,6 +330,8 @@ struct ContextMenuItemSnapshot {
 
 impl Drop for ContextMenuItemSnapshot {
     fn drop(&mut self) {
+        // Balance the native references acquired while snapshotting the menu.
+        // Separators and targetless actions legitimately store null pointers.
         unsafe {
             if !self.action.is_null() {
                 glib::gobject_ffi::g_object_unref(self.action.cast());
@@ -279,10 +344,19 @@ impl Drop for ContextMenuItemSnapshot {
 }
 
 thread_local! {
+    // WPE/GLib objects may only be accessed on their creation thread. Calls
+    // from another thread see a distinct empty registry instead of unsafely
+    // treating NativeView as Send.
     static VIEWS: RefCell<HashMap<u64, Rc<NativeView>>> = RefCell::new(HashMap::new());
+    // Handles are identifiers, not pointers. Zero is permanently reserved for
+    // “no view” and is also the fallback returned by read-only accessors.
     static NEXT_HANDLE: RefCell<u64> = const { RefCell::new(1) };
 }
 
+/// Resolves a public handle and clones its platform-thread `Rc`.
+///
+/// The registry borrow ends before the returned object is used, which permits
+/// GLib signal re-entrancy without a nested `RefCell` borrow of `VIEWS`.
 fn native_view(handle: u64) -> Option<Rc<NativeView>> {
     if handle == 0 {
         return None;
@@ -290,6 +364,10 @@ fn native_view(handle: u64) -> Option<Rc<NativeView>> {
     VIEWS.with_borrow(|views| views.get(&handle).cloned())
 }
 
+/// Allocates the next non-zero process-local handle.
+///
+/// Wrapping is handled defensively. Exhausting the complete `u64` space in one
+/// process is not realistic, and zero remains reserved after wraparound.
 fn next_handle() -> u64 {
     NEXT_HANDLE.with_borrow_mut(|next| {
         let handle = (*next).max(1);
@@ -298,6 +376,10 @@ fn next_handle() -> u64 {
     })
 }
 
+/// Copies a caller-owned NUL-terminated UTF-8 string into Rust storage.
+///
+/// The returned `String` does not borrow the FFI pointer. `-1` denotes null and
+/// `-2` invalid UTF-8.
 fn required_c_string(pointer: *const c_char) -> Result<String, i32> {
     if pointer.is_null() {
         return Err(-1);
@@ -309,6 +391,12 @@ fn required_c_string(pointer: *const c_char) -> Result<String, i32> {
         .map_err(|_| -2)
 }
 
+/// Constructs a headless WPE display, ephemeral network session, and WebView.
+///
+/// The returned `glib::Object` is the sole strong browser owner. `WpeView` and
+/// `WpeToplevel` are transfer-none children. Signal handlers receive only a
+/// weak reference to the surrounding [`NativeView`] so they stop operating as
+/// soon as the public handle is disposed.
 fn build_webview(
     native_view: Weak<NativeView>,
 ) -> Result<(glib::Object, *mut WpeView, *mut WpeToplevel), i32> {
@@ -385,6 +473,11 @@ fn build_webview(
     Ok((webview, view, toplevel))
 }
 
+/// Replaces WebKit's native menu with a retained snapshot consumed by Flutter.
+///
+/// Returning `true` suppresses the WPE-native presentation. Menu action and
+/// target references are retained until Flutter activates/dismisses the menu or
+/// the view is disposed.
 fn connect_context_menu(webview: &glib::Object, native_view: Weak<NativeView>) {
     webview.connect_closure(
         "context-menu",
@@ -447,6 +540,11 @@ fn connect_context_menu(webview: &glib::Object, native_view: Weak<NativeView>) {
     );
 }
 
+/// Connects WPE's `buffer-rendered` signal to the per-view texture transport.
+///
+/// Every callback releases the WPE buffer exactly once, including callbacks
+/// that race with view disposal or receive unsupported buffer types. Supported
+/// DMA-BUFs are copied synchronously before release.
 fn connect_buffer_rendered(view: *mut WpeView, native_view: Weak<NativeView>) {
     // SAFETY: view is a transfer-none GObject kept alive by the WebView.
     let view_object: glib::Object = unsafe { glib::translate::from_glib_none(view.cast()) };
@@ -487,6 +585,18 @@ fn connect_buffer_rendered(view: *mut WpeView, native_view: Weak<NativeView>) {
     );
 }
 
+/// Converts one callback-scoped WPE DMA-BUF into
+/// [`DmaBufFrame`](crate::linux_texture::DmaBufFrame) metadata and forwards it
+/// to the owning texture state.
+///
+/// The rendering fence is consumed and waited for before plane metadata is
+/// read. This prevents EGL from importing producer-incomplete content.
+///
+/// # Safety
+///
+/// `buffer` must be a live `WpeBufferDmaBuf` emitted for `native_view` and must
+/// remain owned by WPE for this call. The caller is responsible for invoking
+/// `wpe_view_buffer_released` after this function returns.
 unsafe fn copy_rendered_dma_buf(native_view: &NativeView, buffer: *mut WpeBuffer) -> i32 {
     let dma_buf = buffer.cast::<WpeBufferDmaBuf>();
     let width = unsafe { wpe_buffer_get_width(buffer) };
@@ -577,6 +687,21 @@ unsafe fn copy_rendered_dma_buf(native_view: &NativeView, buffer: *mut WpeBuffer
 }
 
 #[unsafe(no_mangle)]
+/// Creates one independently owned browser and Flutter texture.
+///
+/// Creation is transactional: the handle is inserted only after texture
+/// registration, WPE construction, signal connection, and initial navigation
+/// all succeed. On success `output_handle` receives a non-zero identifier and
+/// the function returns `0`. Negative values report invalid pointers/strings or
+/// the propagated texture/WPE construction failure.
+///
+/// # Safety
+///
+/// `initial_url` must point to a readable NUL-terminated byte sequence for the
+/// duration of this call. `output_handle` must point to writable, properly
+/// aligned storage for one `u64`. The call must run on Flutter's Linux platform
+/// thread and `engine_handle` must identify the live engine supplied by
+/// Irondash.
 pub unsafe extern "C" fn webview_flutter_linux_view_create(
     engine_handle: i64,
     initial_url: *const c_char,
@@ -625,6 +750,11 @@ pub unsafe extern "C" fn webview_flutter_linux_view_create(
 }
 
 #[unsafe(no_mangle)]
+/// Removes a handle from the registry and tears down its browser and texture.
+///
+/// Registry removal happens first so re-entrant or repeated calls cannot find
+/// partially destroyed state. WPE/menu objects are dropped before the texture
+/// is unregistered. Returns `-1` for zero, unknown, or already disposed handles.
 pub extern "C" fn webview_flutter_linux_view_dispose(handle: u64) -> i32 {
     let native_view = VIEWS.with_borrow_mut(|views| views.remove(&handle));
     let Some(native_view) = native_view else {
@@ -636,35 +766,46 @@ pub extern "C" fn webview_flutter_linux_view_dispose(handle: u64) -> i32 {
 }
 
 #[unsafe(no_mangle)]
+/// Returns the Flutter texture ID for `handle`, or zero if it is invalid.
 pub extern "C" fn webview_flutter_linux_texture_id(handle: u64) -> i64 {
     native_view(handle).map_or(0, |view| view.texture.id())
 }
 
 #[unsafe(no_mangle)]
+/// Returns the current physical texture width, or zero for an invalid handle.
 pub extern "C" fn webview_flutter_linux_texture_width(handle: u64) -> u32 {
     native_view(handle).map_or(0, |view| view.texture.width())
 }
 
 #[unsafe(no_mangle)]
+/// Returns the current physical texture height, or zero for an invalid handle.
 pub extern "C" fn webview_flutter_linux_texture_height(handle: u64) -> u32 {
     native_view(handle).map_or(0, |view| view.texture.height())
 }
 
 #[unsafe(no_mangle)]
+/// Returns the generation incremented after each effective texture resize.
 pub extern "C" fn webview_flutter_linux_texture_generation(handle: u64) -> u64 {
     native_view(handle).map_or(0, |view| view.texture.generation())
 }
 
 #[unsafe(no_mangle)]
+/// Marks this handle's Irondash texture as having a new frame.
+///
+/// Returns `-1` for an invalid/disposed handle or texture, and `-2` for a
+/// poisoned texture lock.
 pub extern "C" fn webview_flutter_linux_texture_request_frame(handle: u64) -> i32 {
     native_view(handle).map_or(-1, |view| view.texture.mark_frame_available())
 }
 
 #[unsafe(no_mangle)]
+/// Returns the number of successful DMA-BUF-to-GL copies for this view.
 pub extern "C" fn webview_flutter_linux_texture_dma_buf_copy_count(handle: u64) -> u64 {
     native_view(handle).map_or(0, |view| view.texture.dma_buf_copy_count())
 }
 
+/// Resolves one retained menu item while keeping fallback behavior uniform for
+/// invalid handles, absent menus, and out-of-range indices.
 fn with_context_menu_item<T: Copy>(
     handle: u64,
     index: u32,
@@ -686,6 +827,10 @@ fn with_context_menu_item<T: Copy>(
         })
 }
 
+/// Resolves the clipboard belonging to a handle's WPE display.
+///
+/// WPE clipboard objects are transfer-none. `operation` must not retain the
+/// pointer beyond the closure call.
 fn with_clipboard<T>(
     handle: u64,
     fallback: T,
@@ -718,6 +863,10 @@ fn with_clipboard<T>(
 const UTF8_TEXT_FORMAT: &[u8] = b"text/plain;charset=utf-8\0";
 
 #[unsafe(no_mangle)]
+/// Returns WPE's monotonically increasing clipboard change count.
+///
+/// Dart compares this value with the last observed count to avoid repeatedly
+/// copying unchanged browser clipboard text. Returns `-1` when unavailable.
 pub extern "C" fn webview_flutter_linux_wpe_clipboard_change_count(handle: u64) -> i64 {
     with_clipboard(handle, -1, |clipboard| unsafe {
         wpe_clipboard_get_change_count(clipboard)
@@ -725,6 +874,10 @@ pub extern "C" fn webview_flutter_linux_wpe_clipboard_change_count(handle: u64) 
 }
 
 #[unsafe(no_mangle)]
+/// Returns the UTF-8 byte length of the current plain-text clipboard value.
+///
+/// WPE allocates a temporary read buffer; this function frees it after reading
+/// the length. Dart uses the result to allocate the exact destination buffer.
 pub extern "C" fn webview_flutter_linux_wpe_clipboard_text_length(handle: u64) -> isize {
     with_clipboard(handle, -1, |clipboard| {
         let mut length = 0;
@@ -741,6 +894,16 @@ pub extern "C" fn webview_flutter_linux_wpe_clipboard_text_length(handle: u64) -
 }
 
 #[unsafe(no_mangle)]
+/// Copies the current plain-text clipboard value into caller-owned storage.
+///
+/// Returns the number of bytes copied. `-1` denotes a null destination, `-2`
+/// an unavailable view/clipboard, `-3` insufficient destination capacity, and
+/// `-4` a failed WPE text read.
+///
+/// # Safety
+///
+/// `destination` must be writable for `destination_length` bytes. It may not
+/// alias memory managed by WPE. The pointer is used only during this call.
 pub unsafe extern "C" fn webview_flutter_linux_wpe_clipboard_copy_text(
     handle: u64,
     destination: *mut u8,
@@ -770,6 +933,16 @@ pub unsafe extern "C" fn webview_flutter_linux_wpe_clipboard_copy_text(
 }
 
 #[unsafe(no_mangle)]
+/// Replaces the browser clipboard with caller-provided UTF-8 plain text.
+///
+/// WPE copies the string into a new `WpeClipboardContent`; the caller retains
+/// ownership of `text`. Returns `-1` for null/invalid UTF-8, `-2` when the
+/// clipboard is unavailable, and `-3` if content allocation fails.
+///
+/// # Safety
+///
+/// `text` must point to a readable NUL-terminated byte sequence for the
+/// duration of this call.
 pub unsafe extern "C" fn webview_flutter_linux_wpe_clipboard_set_text(
     handle: u64,
     text: *const c_char,
@@ -792,6 +965,9 @@ pub unsafe extern "C" fn webview_flutter_linux_wpe_clipboard_set_text(
 }
 
 #[unsafe(no_mangle)]
+/// Returns the generation of the latest Flutter-owned context-menu snapshot.
+///
+/// Zero means no context menu has ever been captured for this handle.
 pub extern "C" fn webview_flutter_linux_wpe_context_menu_generation(handle: u64) -> u64 {
     native_view(handle).map_or(0, |view| {
         view.metrics.context_menu_generation.load(Ordering::Acquire)
@@ -799,6 +975,7 @@ pub extern "C" fn webview_flutter_linux_wpe_context_menu_generation(handle: u64)
 }
 
 #[unsafe(no_mangle)]
+/// Returns the context-menu X position in physical WPE pixels.
 pub extern "C" fn webview_flutter_linux_wpe_context_menu_x(handle: u64) -> f64 {
     native_view(handle).map_or(0.0, |view| {
         view.context_menu
@@ -809,6 +986,7 @@ pub extern "C" fn webview_flutter_linux_wpe_context_menu_x(handle: u64) -> f64 {
 }
 
 #[unsafe(no_mangle)]
+/// Returns the context-menu Y position in physical WPE pixels.
 pub extern "C" fn webview_flutter_linux_wpe_context_menu_y(handle: u64) -> f64 {
     native_view(handle).map_or(0.0, |view| {
         view.context_menu
@@ -819,6 +997,7 @@ pub extern "C" fn webview_flutter_linux_wpe_context_menu_y(handle: u64) -> f64 {
 }
 
 #[unsafe(no_mangle)]
+/// Returns the number of entries in the retained menu snapshot.
 pub extern "C" fn webview_flutter_linux_wpe_context_menu_item_count(handle: u64) -> u32 {
     native_view(handle).map_or(0, |view| {
         view.context_menu
@@ -829,6 +1008,9 @@ pub extern "C" fn webview_flutter_linux_wpe_context_menu_item_count(handle: u64)
 }
 
 #[unsafe(no_mangle)]
+/// Returns the UTF-8 title length for a retained menu entry.
+///
+/// Separators, invalid indices, and missing menus return zero.
 pub extern "C" fn webview_flutter_linux_wpe_context_menu_item_title_length(
     handle: u64,
     index: u32,
@@ -837,6 +1019,15 @@ pub extern "C" fn webview_flutter_linux_wpe_context_menu_item_title_length(
 }
 
 #[unsafe(no_mangle)]
+/// Copies one retained menu title into caller-owned storage.
+///
+/// Returns the byte count, `-1` for a null destination, `-2` for an unavailable
+/// item, or `-3` when the provided capacity is too small.
+///
+/// # Safety
+///
+/// `destination` must be writable for `destination_length` bytes and remain
+/// valid for the duration of this call.
 pub unsafe extern "C" fn webview_flutter_linux_wpe_context_menu_item_copy_title(
     handle: u64,
     index: u32,
@@ -858,6 +1049,7 @@ pub unsafe extern "C" fn webview_flutter_linux_wpe_context_menu_item_copy_title(
 }
 
 #[unsafe(no_mangle)]
+/// Returns one when the indexed context-menu entry is a separator.
 pub extern "C" fn webview_flutter_linux_wpe_context_menu_item_is_separator(
     handle: u64,
     index: u32,
@@ -866,6 +1058,7 @@ pub extern "C" fn webview_flutter_linux_wpe_context_menu_item_is_separator(
 }
 
 #[unsafe(no_mangle)]
+/// Returns one when the indexed menu entry owns an enabled `GAction`.
 pub extern "C" fn webview_flutter_linux_wpe_context_menu_item_is_enabled(
     handle: u64,
     index: u32,
@@ -880,6 +1073,9 @@ pub extern "C" fn webview_flutter_linux_wpe_context_menu_item_is_enabled(
 }
 
 #[unsafe(no_mangle)]
+/// Activates a retained WebKit context-menu action and clears the snapshot.
+///
+/// Returns `-2` for a missing item and `-3` for a separator or disabled action.
 pub extern "C" fn webview_flutter_linux_wpe_context_menu_activate(handle: u64, index: u32) -> i32 {
     let status = with_context_menu_item(handle, index, -2, |item| {
         if item.action.is_null() || unsafe { g_action_get_enabled(item.action) } == 0 {
@@ -897,11 +1093,22 @@ pub extern "C" fn webview_flutter_linux_wpe_context_menu_activate(handle: u64, i
 }
 
 #[unsafe(no_mangle)]
+/// Clears the retained context menu without activating an action.
+///
+/// Returns zero when a menu was dismissed, one when no menu was pending, and
+/// `-1` for an invalid handle.
 pub extern "C" fn webview_flutter_linux_wpe_context_menu_dismiss(handle: u64) -> i32 {
     native_view(handle).map_or(-1, |view| i32::from(view.context_menu.take().is_none()))
 }
 
 #[unsafe(no_mangle)]
+/// Advances the default GLib main context without blocking.
+///
+/// Flutter calls this from a short periodic timer because this experiment does
+/// not integrate WPE's event source into the Flutter runner. The bounded loop
+/// processes at most eight currently pending iterations so one view cannot
+/// monopolize Flutter's platform thread. The context is process-global, so a
+/// pump requested by any valid handle may advance events for every view.
 pub extern "C" fn webview_flutter_linux_wpe_pump(handle: u64) -> i32 {
     if native_view(handle).is_none() {
         return -1;
@@ -917,6 +1124,10 @@ pub extern "C" fn webview_flutter_linux_wpe_pump(handle: u64) -> i32 {
 }
 
 #[unsafe(no_mangle)]
+/// Starts a main-frame navigation for one WebView.
+///
+/// WebKit copies the URI before this function returns. Returns `-1`/`-2` for
+/// invalid caller strings and `-3` for an invalid or torn-down handle.
 pub extern "C" fn webview_flutter_linux_wpe_navigate(handle: u64, url: *const c_char) -> i32 {
     let url =
         match required_c_string(url).and_then(|url| std::ffi::CString::new(url).map_err(|_| -2)) {
@@ -940,6 +1151,11 @@ pub extern "C" fn webview_flutter_linux_wpe_navigate(handle: u64, url: *const c_
 }
 
 #[unsafe(no_mangle)]
+/// Resizes both the WPE toplevel and its child view in physical pixels.
+///
+/// Dimensions must be within `1..=16384`. The texture allocation is resized
+/// later from actual rendered-buffer dimensions, keeping browser and producer
+/// sizes synchronized without allocating here.
 pub extern "C" fn webview_flutter_linux_wpe_resize(handle: u64, width: u32, height: u32) -> i32 {
     if width == 0 || height == 0 || width > 16_384 || height > 16_384 {
         return -1;
@@ -963,6 +1179,7 @@ pub extern "C" fn webview_flutter_linux_wpe_resize(handle: u64, width: u32, heig
 }
 
 #[unsafe(no_mangle)]
+/// Sends focus-in or focus-out to the WPE view for this handle.
 pub extern "C" fn webview_flutter_linux_wpe_set_focus(handle: u64, focused: i32) -> i32 {
     with_view(handle, |view| unsafe {
         if focused != 0 {
@@ -974,12 +1191,19 @@ pub extern "C" fn webview_flutter_linux_wpe_set_focus(handle: u64, focused: i32)
 }
 
 #[unsafe(no_mangle)]
+/// Sets whether WPE should consider this view visible.
+///
+/// Flutter lifecycle changes use this to let WebKit throttle hidden pages.
 pub extern "C" fn webview_flutter_linux_wpe_set_visibility(handle: u64, visible: i32) -> i32 {
     with_view(handle, |view| unsafe {
         wpe_view_set_visible(view, i32::from(visible != 0))
     })
 }
 
+/// Translates Flutter/CEF-compatible modifier bits into WPE modifier bits.
+///
+/// The Dart side intentionally uses DOM/CEF-style flags. Keeping the mapping at
+/// this boundary isolates WPE's bit layout from Flutter keyboard code.
 fn wpe_modifiers(modifiers: u32) -> u32 {
     let mut result = 0;
     if modifiers & (1 << 2) != 0 {
@@ -1009,6 +1233,8 @@ fn wpe_modifiers(modifiers: u32) -> u32 {
     result
 }
 
+/// Converts Flutter's USB HID physical-key usage into the XKB keycode expected
+/// by WPE (evdev code plus XKB's historical offset of eight).
 fn xkb_keycode_from_usb_hid(native_key_code: i32) -> u32 {
     let usage = native_key_code as u32;
     if usage >> 16 != 0x07 {
@@ -1109,6 +1335,10 @@ fn xkb_keycode_from_usb_hid(native_key_code: i32) -> u32 {
     }
 }
 
+/// Encodes a Unicode scalar as an XKB keysym.
+///
+/// Latin-1 values map directly; other scalars use XKB's `0x01000000 | codepoint`
+/// convention. Invalid Unicode values return zero.
 fn unicode_to_xkb_keyval(character: u32) -> u32 {
     match character {
         0 => 0,
@@ -1118,6 +1348,11 @@ fn unicode_to_xkb_keyval(character: u32) -> u32 {
     }
 }
 
+/// Chooses the XKB keysym for a Flutter key event.
+///
+/// Printable event text wins when present. Physical HID usages cover letters,
+/// digits, and punctuation when shortcuts such as Ctrl+A suppress text. The
+/// final Windows/DOM key-code table handles navigation and function keys.
 fn xkb_keyval(windows_key_code: i32, native_key_code: i32, character: u32) -> u32 {
     let character_keyval = unicode_to_xkb_keyval(character);
     if character_keyval != 0 {
@@ -1167,6 +1402,10 @@ fn xkb_keyval(windows_key_code: i32, native_key_code: i32, character: u32) -> u3
     }
 }
 
+/// Runs a synchronous operation with a transfer-none WPE view pointer.
+///
+/// The runtime borrow and strong `Rc` remain live for the complete operation,
+/// preventing disposal from invalidating the pointer during re-entrant code.
 fn with_view(handle: u64, operation: impl FnOnce(*mut WpeView)) -> i32 {
     let Some(native_view) = native_view(handle) else {
         return -3;
@@ -1181,6 +1420,13 @@ fn with_view(handle: u64, operation: impl FnOnce(*mut WpeView)) -> i32 {
     }
 }
 
+/// Delivers one newly allocated WPE event and releases its caller reference.
+///
+/// # Safety
+///
+/// `view` must be live for the duration of the call. A non-null `event` must
+/// have been created for that exact view and carry one reference owned by this
+/// function. Null events are ignored because WPE constructors may fail.
 unsafe fn dispatch_event(view: *mut WpeView, event: *mut WpeEvent) {
     if event.is_null() {
         return;
@@ -1192,6 +1438,10 @@ unsafe fn dispatch_event(view: *mut WpeView, event: *mut WpeEvent) {
 }
 
 #[unsafe(no_mangle)]
+/// Sends an absolute pointer-move event in physical view coordinates.
+///
+/// WPE has no corresponding synthetic leave constructor in this path, so leave
+/// notifications are intentionally accepted as no-ops.
 pub extern "C" fn webview_flutter_linux_wpe_send_mouse_move(
     handle: u64,
     x: i32,
@@ -1222,6 +1472,10 @@ pub extern "C" fn webview_flutter_linux_wpe_send_mouse_move(
 }
 
 #[unsafe(no_mangle)]
+/// Sends a pointer-button press or release.
+///
+/// Dart button indices `0..=2` are converted to WPE's `1..=3` numbering.
+/// Press counts outside `1..=3` are rejected before constructing the event.
 pub extern "C" fn webview_flutter_linux_wpe_send_mouse_button(
     handle: u64,
     x: i32,
@@ -1258,6 +1512,7 @@ pub extern "C" fn webview_flutter_linux_wpe_send_mouse_button(
 }
 
 #[unsafe(no_mangle)]
+/// Sends a precise two-axis scroll event at the supplied physical position.
 pub extern "C" fn webview_flutter_linux_wpe_send_mouse_wheel(
     handle: u64,
     x: i32,
@@ -1286,6 +1541,11 @@ pub extern "C" fn webview_flutter_linux_wpe_send_mouse_wheel(
 }
 
 #[unsafe(no_mangle)]
+/// Translates and sends a Flutter keyboard event to WPE.
+///
+/// Dart event types `0`, `1`, and `3` are key-down variants; `2` is key-up.
+/// Modifier, USB HID, DOM Windows key code, and Unicode data are combined into
+/// the XKB keycode/keysym pair expected by WPE.
 pub extern "C" fn webview_flutter_linux_wpe_send_key(
     handle: u64,
     event_type: u32,
@@ -1317,6 +1577,7 @@ pub extern "C" fn webview_flutter_linux_wpe_send_key(
 }
 
 #[unsafe(no_mangle)]
+/// Returns the generation assigned to the latest accepted WPE frame.
 pub extern "C" fn webview_flutter_linux_wpe_frame_generation(handle: u64) -> u64 {
     native_view(handle).map_or(0, |view| {
         view.metrics.frame_generation.load(Ordering::Acquire)
@@ -1324,11 +1585,13 @@ pub extern "C" fn webview_flutter_linux_wpe_frame_generation(handle: u64) -> u64
 }
 
 #[unsafe(no_mangle)]
+/// Returns the number of `buffer-rendered` signals observed for this view.
 pub extern "C" fn webview_flutter_linux_wpe_paint_count(handle: u64) -> u64 {
     native_view(handle).map_or(0, |view| view.metrics.paint_count.load(Ordering::Acquire))
 }
 
 #[unsafe(no_mangle)]
+/// Returns the number of rendered buffers successfully copied to the GL ring.
 pub extern "C" fn webview_flutter_linux_wpe_valid_paint_count(handle: u64) -> u64 {
     native_view(handle).map_or(0, |view| {
         view.metrics.valid_paint_count.load(Ordering::Acquire)
@@ -1336,31 +1599,37 @@ pub extern "C" fn webview_flutter_linux_wpe_valid_paint_count(handle: u64) -> u6
 }
 
 #[unsafe(no_mangle)]
+/// Returns the plane count reported by the latest accepted DMA-BUF.
 pub extern "C" fn webview_flutter_linux_wpe_plane_count(handle: u64) -> u32 {
     native_view(handle).map_or(0, |view| view.metrics.plane_count.load(Ordering::Acquire))
 }
 
 #[unsafe(no_mangle)]
+/// Returns the DRM format reported by the latest accepted DMA-BUF.
 pub extern "C" fn webview_flutter_linux_wpe_format(handle: u64) -> u32 {
     native_view(handle).map_or(0, |view| view.metrics.format.load(Ordering::Acquire))
 }
 
 #[unsafe(no_mangle)]
+/// Returns the DRM modifier reported by the latest accepted DMA-BUF.
 pub extern "C" fn webview_flutter_linux_wpe_modifier(handle: u64) -> u64 {
     native_view(handle).map_or(0, |view| view.metrics.modifier.load(Ordering::Acquire))
 }
 
 #[unsafe(no_mangle)]
+/// Returns the width of the latest accepted WPE buffer.
 pub extern "C" fn webview_flutter_linux_wpe_width(handle: u64) -> u32 {
     native_view(handle).map_or(0, |view| view.metrics.width.load(Ordering::Acquire))
 }
 
 #[unsafe(no_mangle)]
+/// Returns the height of the latest accepted WPE buffer.
 pub extern "C" fn webview_flutter_linux_wpe_height(handle: u64) -> u32 {
     native_view(handle).map_or(0, |view| view.metrics.height.load(Ordering::Acquire))
 }
 
 #[unsafe(no_mangle)]
+/// Returns the first-plane stride of the latest accepted DMA-BUF.
 pub extern "C" fn webview_flutter_linux_wpe_first_plane_stride(handle: u64) -> u32 {
     native_view(handle).map_or(0, |view| {
         view.metrics.first_plane_stride.load(Ordering::Acquire)

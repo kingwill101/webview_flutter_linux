@@ -12,8 +12,8 @@ clipboard data, context-menu actions, and lifecycle state travel back through
 the same Dart FFI bridge.
 
 > [!IMPORTANT]
-> This package is under active development. It is not published on pub.dev and
-> does not yet implement the complete `webview_flutter` platform interface.
+> This package is under active development and does not yet implement the
+> complete `webview_flutter` platform interface.
 
 ## Status
 
@@ -29,19 +29,13 @@ the same Dart FFI bridge.
 
 ## Installation
 
-Until the first pub.dev release, GitHub collaborators with SSH access to the
-private repository can use a Git dependency:
+Add the official interface and this Linux implementation to the application:
 
 ```yaml
 dependencies:
   webview_flutter: ^4.14.1
-  webview_flutter_linux:
-    git:
-      url: git@github.com:kingwill101/webview_flutter_linux.git
-      ref: main
+  webview_flutter_linux: ^0.1.0-dev.1
 ```
-
-Pin `ref` to a commit SHA when reproducible application builds matter.
 
 The generated Linux plugin registrant selects `WebViewFlutterLinux`
 automatically. Application code should import and use `webview_flutter`, not
@@ -128,7 +122,8 @@ Each mounted `WebViewWidget` has its own native view handle and Flutter texture:
 
 1. The Dart controller obtains the current Flutter engine handle through
    Irondash.
-2. The Dart build hook compiles and bundles the Rust code asset.
+2. The Dart build hook resolves a verified prebuilt Rust code asset, falling
+   back to a local source build when no matching artifact is available.
 3. Rust creates a headless WPE view and registers an external texture with the
    Flutter engine.
 4. WPE exports accelerated frames as DMA-BUFs.
@@ -141,24 +136,16 @@ support, and WPE subprocesses come from the host installation.
 
 ## Native artifact delivery
 
-Prebuilt Rust libraries are **not currently published**. The build hook is
-initialized with [`native_prebuilt`](https://pub.dev/packages/native_prebuilt)
-for `linux-x64`, but the manifest intentionally contains no artifact hashes
-until a release binary is produced. An unhashed artifact is never downloaded;
-the hook instead compiles and bundles the bridge through
-`native_toolchain_rust`.
+The package publishes a checksummed `linux-x64` Rust bridge through
+[`native_prebuilt`](https://pub.dev/packages/native_prebuilt). The build hook
+downloads, verifies, and caches that library from the package's public GitHub
+release. If a matching prebuilt cannot be resolved, `native_toolchain_rust`
+retains the source-build fallback.
 
-Once populated, the manifest lets the hook download, verify, and cache a
-matching Rust bridge while retaining the existing source fallback. A successful
-prebuilt path removes Rust, `pkg-config`, and WPE/libepoxy development or
-link-time artifacts from the consumer build, but it does not remove the system
-WPE WebKit, libepoxy, GLib, or media runtime requirements.
-
-Prebuilt artifacts will only be advertised after they are built against a
-documented Linux ABI baseline and visibly tested on every published target.
-While this repository is private, unauthenticated `native_prebuilt` downloads
-from its GitHub release URL cannot succeed. The source fallback remains active;
-automatic release downloads become available when the repository is public.
+The prebuilt path removes Rust, `pkg-config`, and WPE/libepoxy development or
+link-time artifacts from the consumer build. It does not remove the system WPE
+WebKit, libepoxy, GLib, or media runtime requirements. The current artifact is
+available only for Linux x86-64.
 
 ## Implemented
 

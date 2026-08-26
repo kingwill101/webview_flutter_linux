@@ -1,249 +1,80 @@
-// SPDX-License-Identifier: UNLICENSED
+// Copyright 2026 The webview_flutter_linux authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
 
 import 'dart:ffi' as ffi;
 
-@ffi.Native<ffi.Uint32 Function()>(symbol: 'cef_texture_browser_api_version')
-external int cefTextureBrowserApiVersion();
-
-@ffi.Native<ffi.Uint32 Function()>(
-  symbol: 'cef_texture_browser_browser_backend',
-)
-external int cefTextureBrowserBrowserBackend();
-
-@ffi.Native<ffi.Uint32 Function()>(symbol: 'cef_texture_browser_frame_width')
-external int cefTextureBrowserFrameWidth();
-
-@ffi.Native<ffi.Uint32 Function()>(symbol: 'cef_texture_browser_frame_height')
-external int cefTextureBrowserFrameHeight();
-
-@ffi.Native<ffi.Size Function()>(
-  symbol: 'cef_texture_browser_frame_byte_length',
-)
-external int cefTextureBrowserFrameByteLength();
+@ffi.Native<ffi.Uint32 Function()>(symbol: 'webview_flutter_linux_api_version')
+external int webviewFlutterLinuxApiVersion();
 
 @ffi.Native<ffi.Int32 Function(ffi.Int64)>(
-  symbol: 'cef_texture_browser_flutter_texture_initialize',
+  symbol: 'webview_flutter_linux_texture_initialize',
 )
-external int cefTextureBrowserFlutterTextureInitialize(int engineHandle);
+external int webviewFlutterLinuxTextureInitialize(int engineHandle);
 
-@ffi.Native<ffi.Int32 Function()>(symbol: 'cef_texture_browser_native_shutdown')
-external int cefTextureBrowserNativeShutdown();
+@ffi.Native<ffi.Int32 Function()>(symbol: 'webview_flutter_linux_shutdown')
+external int webviewFlutterLinuxShutdown();
 
-@ffi.Native<ffi.Int64 Function()>(
-  symbol: 'cef_texture_browser_flutter_texture_id',
-)
-external int cefTextureBrowserFlutterTextureId();
-
-@ffi.Native<ffi.Int32 Function(ffi.Uint32, ffi.Uint32)>(
-  symbol: 'cef_texture_browser_flutter_texture_resize',
-)
-external int cefTextureBrowserFlutterTextureResize(int width, int height);
+@ffi.Native<ffi.Int64 Function()>(symbol: 'webview_flutter_linux_texture_id')
+external int webviewFlutterLinuxTextureId();
 
 @ffi.Native<ffi.Uint32 Function()>(
-  symbol: 'cef_texture_browser_flutter_texture_width',
+  symbol: 'webview_flutter_linux_texture_width',
 )
-external int cefTextureBrowserFlutterTextureWidth();
+external int webviewFlutterLinuxTextureWidth();
 
 @ffi.Native<ffi.Uint32 Function()>(
-  symbol: 'cef_texture_browser_flutter_texture_height',
+  symbol: 'webview_flutter_linux_texture_height',
 )
-external int cefTextureBrowserFlutterTextureHeight();
+external int webviewFlutterLinuxTextureHeight();
 
 @ffi.Native<ffi.Uint64 Function()>(
-  symbol: 'cef_texture_browser_flutter_texture_generation',
+  symbol: 'webview_flutter_linux_texture_generation',
 )
-external int cefTextureBrowserFlutterTextureGeneration();
+external int webviewFlutterLinuxTextureGeneration();
 
 @ffi.Native<ffi.Int32 Function()>(
-  symbol: 'cef_texture_browser_flutter_texture_request_frame',
+  symbol: 'webview_flutter_linux_texture_request_frame',
 )
-external int cefTextureBrowserFlutterTextureRequestFrame();
-
-@ffi.Native<ffi.Uint32 Function()>(
-  symbol: 'cef_texture_browser_flutter_texture_gl_name',
-)
-external int cefTextureBrowserFlutterTextureGlName();
-
-@ffi.Native<ffi.Size Function()>(
-  symbol: 'cef_texture_browser_flutter_texture_egl_display',
-)
-external int cefTextureBrowserFlutterTextureEglDisplay();
-
-@ffi.Native<ffi.Size Function()>(
-  symbol: 'cef_texture_browser_flutter_texture_egl_context',
-)
-external int cefTextureBrowserFlutterTextureEglContext();
+external int webviewFlutterLinuxTextureRequestFrame();
 
 @ffi.Native<ffi.Uint64 Function()>(
-  symbol: 'cef_texture_browser_flutter_texture_dma_buf_generation',
+  symbol: 'webview_flutter_linux_texture_dma_buf_copy_count',
 )
-external int cefTextureBrowserFlutterTextureDmaBufGeneration();
-
-@ffi.Native<ffi.Int32 Function()>(
-  symbol: 'cef_texture_browser_flutter_texture_dma_buf_status',
-)
-external int cefTextureBrowserFlutterTextureDmaBufStatus();
-
-@ffi.Native<ffi.Uint64 Function()>(
-  symbol: 'cef_texture_browser_flutter_texture_dma_buf_copy_count',
-)
-external int cefTextureBrowserFlutterTextureDmaBufCopyCount();
-
-@ffi.Native<ffi.Uint64 Function()>(
-  symbol: 'cef_texture_browser_flutter_texture_dma_buf_last_copy_micros',
-)
-external int cefTextureBrowserFlutterTextureDmaBufLastCopyMicros();
-
-@ffi.Native<ffi.Uint64 Function()>(
-  symbol: 'cef_texture_browser_flutter_texture_dma_buf_max_copy_micros',
-)
-external int cefTextureBrowserFlutterTextureDmaBufMaxCopyMicros();
-
-@ffi.Native<ffi.Uint64 Function()>(
-  symbol: 'cef_texture_browser_flutter_texture_dma_buf_fence_fallback_count',
-)
-external int cefTextureBrowserFlutterTextureDmaBufFenceFallbackCount();
-
-@ffi.Native<ffi.Int32 Function(ffi.Pointer<ffi.Uint8>, ffi.Size, ffi.Uint64)>(
-  symbol: 'cef_texture_browser_render_test_frame',
-)
-external int cefTextureBrowserRenderTestFrame(
-  ffi.Pointer<ffi.Uint8> destination,
-  int destinationLength,
-  int frameNumber,
-);
-
-@ffi.Native<ffi.Int32 Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>)>(
-  symbol: 'cef_texture_browser_cef_initialize',
-)
-external int cefTextureBrowserCefInitialize(
-  ffi.Pointer<ffi.Char> runtimeDirectory,
-  ffi.Pointer<ffi.Char> initialUrl,
-);
-
-@ffi.Native<
-  ffi.Int32 Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>, ffi.Uint32)
->(symbol: 'cef_texture_browser_cef_initialize_with_options')
-external int cefTextureBrowserCefInitializeWithOptions(
-  ffi.Pointer<ffi.Char> runtimeDirectory,
-  ffi.Pointer<ffi.Char> initialUrl,
-  int transport,
-);
-
-@ffi.Native<ffi.Int32 Function()>(symbol: 'cef_texture_browser_cef_pump')
-external int cefTextureBrowserCefPump();
-
-@ffi.Native<ffi.Uint64 Function()>(
-  symbol: 'cef_texture_browser_cef_accelerated_paint_count',
-)
-external int cefTextureBrowserCefAcceleratedPaintCount();
-
-@ffi.Native<ffi.Uint64 Function()>(
-  symbol: 'cef_texture_browser_cef_accelerated_valid_paint_count',
-)
-external int cefTextureBrowserCefAcceleratedValidPaintCount();
-
-@ffi.Native<ffi.Uint32 Function()>(
-  symbol: 'cef_texture_browser_cef_accelerated_plane_count',
-)
-external int cefTextureBrowserCefAcceleratedPlaneCount();
-
-@ffi.Native<ffi.Uint32 Function()>(
-  symbol: 'cef_texture_browser_cef_accelerated_format',
-)
-external int cefTextureBrowserCefAcceleratedFormat();
-
-@ffi.Native<ffi.Uint64 Function()>(
-  symbol: 'cef_texture_browser_cef_accelerated_modifier',
-)
-external int cefTextureBrowserCefAcceleratedModifier();
-
-@ffi.Native<ffi.Int32 Function()>(
-  symbol: 'cef_texture_browser_cef_accelerated_coded_width',
-)
-external int cefTextureBrowserCefAcceleratedCodedWidth();
-
-@ffi.Native<ffi.Int32 Function()>(
-  symbol: 'cef_texture_browser_cef_accelerated_coded_height',
-)
-external int cefTextureBrowserCefAcceleratedCodedHeight();
-
-@ffi.Native<ffi.Int32 Function()>(
-  symbol: 'cef_texture_browser_cef_accelerated_visible_width',
-)
-external int cefTextureBrowserCefAcceleratedVisibleWidth();
-
-@ffi.Native<ffi.Int32 Function()>(
-  symbol: 'cef_texture_browser_cef_accelerated_visible_height',
-)
-external int cefTextureBrowserCefAcceleratedVisibleHeight();
-
-@ffi.Native<ffi.Uint32 Function()>(
-  symbol: 'cef_texture_browser_cef_accelerated_first_plane_stride',
-)
-external int cefTextureBrowserCefAcceleratedFirstPlaneStride();
-
-@ffi.Native<ffi.Uint64 Function()>(
-  symbol: 'cef_texture_browser_cef_dma_buf_generation',
-)
-external int cefTextureBrowserCefDmaBufGeneration();
-
-@ffi.Native<ffi.Uint64 Function()>(
-  symbol: 'cef_texture_browser_cef_frame_generation',
-)
-external int cefTextureBrowserCefFrameGeneration();
-
-@ffi.Native<ffi.Uint32 Function()>(
-  symbol: 'cef_texture_browser_cef_frame_width',
-)
-external int cefTextureBrowserCefFrameWidth();
-
-@ffi.Native<ffi.Uint32 Function()>(
-  symbol: 'cef_texture_browser_cef_frame_height',
-)
-external int cefTextureBrowserCefFrameHeight();
-
-@ffi.Native<ffi.Size Function()>(
-  symbol: 'cef_texture_browser_cef_frame_byte_length',
-)
-external int cefTextureBrowserCefFrameByteLength();
-
-@ffi.Native<ffi.Int32 Function(ffi.Pointer<ffi.Uint8>, ffi.Size)>(
-  symbol: 'cef_texture_browser_cef_copy_latest_frame',
-)
-external int cefTextureBrowserCefCopyLatestFrame(
-  ffi.Pointer<ffi.Uint8> destination,
-  int destinationLength,
-);
+external int webviewFlutterLinuxTextureDmaBufCopyCount();
 
 @ffi.Native<ffi.Int32 Function(ffi.Pointer<ffi.Char>)>(
-  symbol: 'cef_texture_browser_cef_navigate',
+  symbol: 'webview_flutter_linux_wpe_initialize',
 )
-external int cefTextureBrowserCefNavigate(ffi.Pointer<ffi.Char> url);
+external int webviewFlutterLinuxWpeInitialize(ffi.Pointer<ffi.Char> initialUrl);
 
-@ffi.Native<ffi.Int32 Function(ffi.Uint32, ffi.Uint32, ffi.Float)>(
-  symbol: 'cef_texture_browser_cef_resize',
+@ffi.Native<ffi.Int32 Function()>(symbol: 'webview_flutter_linux_wpe_pump')
+external int webviewFlutterLinuxWpePump();
+
+@ffi.Native<ffi.Int32 Function(ffi.Pointer<ffi.Char>)>(
+  symbol: 'webview_flutter_linux_wpe_navigate',
 )
-external int cefTextureBrowserCefResize(
-  int logicalWidth,
-  int logicalHeight,
-  double deviceScaleFactor,
-);
+external int webviewFlutterLinuxWpeNavigate(ffi.Pointer<ffi.Char> url);
+
+@ffi.Native<ffi.Int32 Function(ffi.Uint32, ffi.Uint32)>(
+  symbol: 'webview_flutter_linux_wpe_resize',
+)
+external int webviewFlutterLinuxWpeResize(int width, int height);
 
 @ffi.Native<ffi.Int32 Function(ffi.Int32)>(
-  symbol: 'cef_texture_browser_cef_set_focus',
+  symbol: 'webview_flutter_linux_wpe_set_focus',
 )
-external int cefTextureBrowserCefSetFocus(int focused);
+external int webviewFlutterLinuxWpeSetFocus(int focused);
 
 @ffi.Native<ffi.Int32 Function(ffi.Int32)>(
-  symbol: 'cef_texture_browser_cef_set_visibility',
+  symbol: 'webview_flutter_linux_wpe_set_visibility',
 )
-external int cefTextureBrowserCefSetVisibility(int visible);
+external int webviewFlutterLinuxWpeSetVisibility(int visible);
 
 @ffi.Native<ffi.Int32 Function(ffi.Int32, ffi.Int32, ffi.Uint32, ffi.Int32)>(
-  symbol: 'cef_texture_browser_cef_send_mouse_move',
+  symbol: 'webview_flutter_linux_wpe_send_mouse_move',
 )
-external int cefTextureBrowserCefSendMouseMove(
+external int webviewFlutterLinuxWpeSendMouseMove(
   int x,
   int y,
   int modifiers,
@@ -259,8 +90,8 @@ external int cefTextureBrowserCefSendMouseMove(
     ffi.Int32,
     ffi.Int32,
   )
->(symbol: 'cef_texture_browser_cef_send_mouse_button')
-external int cefTextureBrowserCefSendMouseButton(
+>(symbol: 'webview_flutter_linux_wpe_send_mouse_button')
+external int webviewFlutterLinuxWpeSendMouseButton(
   int x,
   int y,
   int modifiers,
@@ -271,8 +102,8 @@ external int cefTextureBrowserCefSendMouseButton(
 
 @ffi.Native<
   ffi.Int32 Function(ffi.Int32, ffi.Int32, ffi.Uint32, ffi.Int32, ffi.Int32)
->(symbol: 'cef_texture_browser_cef_send_mouse_wheel')
-external int cefTextureBrowserCefSendMouseWheel(
+>(symbol: 'webview_flutter_linux_wpe_send_mouse_wheel')
+external int webviewFlutterLinuxWpeSendMouseWheel(
   int x,
   int y,
   int modifiers,
@@ -289,95 +120,8 @@ external int cefTextureBrowserCefSendMouseWheel(
     ffi.Uint32,
     ffi.Uint32,
   )
->(symbol: 'cef_texture_browser_cef_send_key')
-external int cefTextureBrowserCefSendKey(
-  int eventType,
-  int modifiers,
-  int windowsKeyCode,
-  int nativeKeyCode,
-  int character,
-  int unmodifiedCharacter,
-);
-
-@ffi.Native<ffi.Int32 Function(ffi.Pointer<ffi.Char>)>(
-  symbol: 'cef_texture_browser_wpe_initialize',
-)
-external int cefTextureBrowserWpeInitialize(ffi.Pointer<ffi.Char> initialUrl);
-
-@ffi.Native<ffi.Int32 Function()>(symbol: 'cef_texture_browser_wpe_pump')
-external int cefTextureBrowserWpePump();
-
-@ffi.Native<ffi.Int32 Function(ffi.Int32)>(
-  symbol: 'cef_texture_browser_wpe_set_focus',
-)
-external int cefTextureBrowserWpeSetFocus(int focused);
-
-@ffi.Native<ffi.Int32 Function(ffi.Pointer<ffi.Char>)>(
-  symbol: 'cef_texture_browser_wpe_navigate',
-)
-external int cefTextureBrowserWpeNavigate(ffi.Pointer<ffi.Char> url);
-
-@ffi.Native<ffi.Int32 Function(ffi.Uint32, ffi.Uint32)>(
-  symbol: 'cef_texture_browser_wpe_resize',
-)
-external int cefTextureBrowserWpeResize(int width, int height);
-
-@ffi.Native<ffi.Int32 Function(ffi.Int32)>(
-  symbol: 'cef_texture_browser_wpe_set_visibility',
-)
-external int cefTextureBrowserWpeSetVisibility(int visible);
-
-@ffi.Native<ffi.Int32 Function(ffi.Int32, ffi.Int32, ffi.Uint32, ffi.Int32)>(
-  symbol: 'cef_texture_browser_wpe_send_mouse_move',
-)
-external int cefTextureBrowserWpeSendMouseMove(
-  int x,
-  int y,
-  int modifiers,
-  int mouseLeave,
-);
-
-@ffi.Native<
-  ffi.Int32 Function(
-    ffi.Int32,
-    ffi.Int32,
-    ffi.Uint32,
-    ffi.Uint32,
-    ffi.Int32,
-    ffi.Int32,
-  )
->(symbol: 'cef_texture_browser_wpe_send_mouse_button')
-external int cefTextureBrowserWpeSendMouseButton(
-  int x,
-  int y,
-  int modifiers,
-  int button,
-  int mouseUp,
-  int clickCount,
-);
-
-@ffi.Native<
-  ffi.Int32 Function(ffi.Int32, ffi.Int32, ffi.Uint32, ffi.Int32, ffi.Int32)
->(symbol: 'cef_texture_browser_wpe_send_mouse_wheel')
-external int cefTextureBrowserWpeSendMouseWheel(
-  int x,
-  int y,
-  int modifiers,
-  int deltaX,
-  int deltaY,
-);
-
-@ffi.Native<
-  ffi.Int32 Function(
-    ffi.Uint32,
-    ffi.Uint32,
-    ffi.Int32,
-    ffi.Int32,
-    ffi.Uint32,
-    ffi.Uint32,
-  )
->(symbol: 'cef_texture_browser_wpe_send_key')
-external int cefTextureBrowserWpeSendKey(
+>(symbol: 'webview_flutter_linux_wpe_send_key')
+external int webviewFlutterLinuxWpeSendKey(
   int eventType,
   int modifiers,
   int windowsKeyCode,
@@ -387,115 +131,83 @@ external int cefTextureBrowserWpeSendKey(
 );
 
 @ffi.Native<ffi.Int64 Function()>(
-  symbol: 'cef_texture_browser_wpe_clipboard_change_count',
+  symbol: 'webview_flutter_linux_wpe_clipboard_change_count',
 )
-external int cefTextureBrowserWpeClipboardChangeCount();
+external int webviewFlutterLinuxWpeClipboardChangeCount();
 
 @ffi.Native<ffi.IntPtr Function()>(
-  symbol: 'cef_texture_browser_wpe_clipboard_text_length',
+  symbol: 'webview_flutter_linux_wpe_clipboard_text_length',
 )
-external int cefTextureBrowserWpeClipboardTextLength();
+external int webviewFlutterLinuxWpeClipboardTextLength();
 
 @ffi.Native<ffi.Int32 Function(ffi.Pointer<ffi.Uint8>, ffi.Size)>(
-  symbol: 'cef_texture_browser_wpe_clipboard_copy_text',
+  symbol: 'webview_flutter_linux_wpe_clipboard_copy_text',
 )
-external int cefTextureBrowserWpeClipboardCopyText(
+external int webviewFlutterLinuxWpeClipboardCopyText(
   ffi.Pointer<ffi.Uint8> destination,
   int destinationLength,
 );
 
 @ffi.Native<ffi.Int32 Function(ffi.Pointer<ffi.Char>)>(
-  symbol: 'cef_texture_browser_wpe_clipboard_set_text',
+  symbol: 'webview_flutter_linux_wpe_clipboard_set_text',
 )
-external int cefTextureBrowserWpeClipboardSetText(ffi.Pointer<ffi.Char> text);
+external int webviewFlutterLinuxWpeClipboardSetText(ffi.Pointer<ffi.Char> text);
 
 @ffi.Native<ffi.Uint64 Function()>(
-  symbol: 'cef_texture_browser_wpe_context_menu_generation',
+  symbol: 'webview_flutter_linux_wpe_context_menu_generation',
 )
-external int cefTextureBrowserWpeContextMenuGeneration();
+external int webviewFlutterLinuxWpeContextMenuGeneration();
 
 @ffi.Native<ffi.Double Function()>(
-  symbol: 'cef_texture_browser_wpe_context_menu_x',
+  symbol: 'webview_flutter_linux_wpe_context_menu_x',
 )
-external double cefTextureBrowserWpeContextMenuX();
+external double webviewFlutterLinuxWpeContextMenuX();
 
 @ffi.Native<ffi.Double Function()>(
-  symbol: 'cef_texture_browser_wpe_context_menu_y',
+  symbol: 'webview_flutter_linux_wpe_context_menu_y',
 )
-external double cefTextureBrowserWpeContextMenuY();
+external double webviewFlutterLinuxWpeContextMenuY();
 
 @ffi.Native<ffi.Uint32 Function()>(
-  symbol: 'cef_texture_browser_wpe_context_menu_item_count',
+  symbol: 'webview_flutter_linux_wpe_context_menu_item_count',
 )
-external int cefTextureBrowserWpeContextMenuItemCount();
+external int webviewFlutterLinuxWpeContextMenuItemCount();
 
 @ffi.Native<ffi.Size Function(ffi.Uint32)>(
-  symbol: 'cef_texture_browser_wpe_context_menu_item_title_length',
+  symbol: 'webview_flutter_linux_wpe_context_menu_item_title_length',
 )
-external int cefTextureBrowserWpeContextMenuItemTitleLength(int index);
+external int webviewFlutterLinuxWpeContextMenuItemTitleLength(int index);
 
 @ffi.Native<ffi.Int32 Function(ffi.Uint32, ffi.Pointer<ffi.Uint8>, ffi.Size)>(
-  symbol: 'cef_texture_browser_wpe_context_menu_item_copy_title',
+  symbol: 'webview_flutter_linux_wpe_context_menu_item_copy_title',
 )
-external int cefTextureBrowserWpeContextMenuItemCopyTitle(
+external int webviewFlutterLinuxWpeContextMenuItemCopyTitle(
   int index,
   ffi.Pointer<ffi.Uint8> destination,
   int destinationLength,
 );
 
 @ffi.Native<ffi.Int32 Function(ffi.Uint32)>(
-  symbol: 'cef_texture_browser_wpe_context_menu_item_is_separator',
+  symbol: 'webview_flutter_linux_wpe_context_menu_item_is_separator',
 )
-external int cefTextureBrowserWpeContextMenuItemIsSeparator(int index);
+external int webviewFlutterLinuxWpeContextMenuItemIsSeparator(int index);
 
 @ffi.Native<ffi.Int32 Function(ffi.Uint32)>(
-  symbol: 'cef_texture_browser_wpe_context_menu_item_is_enabled',
+  symbol: 'webview_flutter_linux_wpe_context_menu_item_is_enabled',
 )
-external int cefTextureBrowserWpeContextMenuItemIsEnabled(int index);
+external int webviewFlutterLinuxWpeContextMenuItemIsEnabled(int index);
 
 @ffi.Native<ffi.Int32 Function(ffi.Uint32)>(
-  symbol: 'cef_texture_browser_wpe_context_menu_activate',
+  symbol: 'webview_flutter_linux_wpe_context_menu_activate',
 )
-external int cefTextureBrowserWpeContextMenuActivate(int index);
+external int webviewFlutterLinuxWpeContextMenuActivate(int index);
 
 @ffi.Native<ffi.Int32 Function()>(
-  symbol: 'cef_texture_browser_wpe_context_menu_dismiss',
+  symbol: 'webview_flutter_linux_wpe_context_menu_dismiss',
 )
-external int cefTextureBrowserWpeContextMenuDismiss();
+external int webviewFlutterLinuxWpeContextMenuDismiss();
 
 @ffi.Native<ffi.Uint64 Function()>(
-  symbol: 'cef_texture_browser_wpe_frame_generation',
+  symbol: 'webview_flutter_linux_wpe_paint_count',
 )
-external int cefTextureBrowserWpeFrameGeneration();
-
-@ffi.Native<ffi.Uint64 Function()>(
-  symbol: 'cef_texture_browser_wpe_paint_count',
-)
-external int cefTextureBrowserWpePaintCount();
-
-@ffi.Native<ffi.Uint64 Function()>(
-  symbol: 'cef_texture_browser_wpe_valid_paint_count',
-)
-external int cefTextureBrowserWpeValidPaintCount();
-
-@ffi.Native<ffi.Uint32 Function()>(
-  symbol: 'cef_texture_browser_wpe_plane_count',
-)
-external int cefTextureBrowserWpePlaneCount();
-
-@ffi.Native<ffi.Uint32 Function()>(symbol: 'cef_texture_browser_wpe_format')
-external int cefTextureBrowserWpeFormat();
-
-@ffi.Native<ffi.Uint64 Function()>(symbol: 'cef_texture_browser_wpe_modifier')
-external int cefTextureBrowserWpeModifier();
-
-@ffi.Native<ffi.Uint32 Function()>(symbol: 'cef_texture_browser_wpe_width')
-external int cefTextureBrowserWpeWidth();
-
-@ffi.Native<ffi.Uint32 Function()>(symbol: 'cef_texture_browser_wpe_height')
-external int cefTextureBrowserWpeHeight();
-
-@ffi.Native<ffi.Uint32 Function()>(
-  symbol: 'cef_texture_browser_wpe_first_plane_stride',
-)
-external int cefTextureBrowserWpeFirstPlaneStride();
+external int webviewFlutterLinuxWpePaintCount();

@@ -1,10 +1,17 @@
-name: cef_texture_browser
-description: A Rust FFI and off-screen browser rendering probe for Flutter Linux.
-publish_to: none
-version: 1.0.0+1
+name: webview_flutter_linux
+description: A WPE WebKit implementation of the webview_flutter plugin for Linux.
+version: 0.1.0-dev.1
 
 environment:
-  sdk: ^3.13.0
+  sdk: ^3.10.0
+  flutter: ">=3.38.0"
+
+flutter:
+  plugin:
+    implements: webview_flutter
+    platforms:
+      linux:
+        dartPluginClass: WebViewFlutterLinux
 
 dependencies:
   code_assets: ^1.2.1
@@ -13,13 +20,10 @@ dependencies:
     sdk: flutter
   hooks: ^2.2.0
   irondash_engine_context: ^0.5.5
-  marionette_flutter: ^0.6.0
   native_toolchain_rust: ^1.0.6
+  webview_flutter_platform_interface: ^2.15.1
 
 dev_dependencies:
   flutter_lints: ^6.0.0
   flutter_test:
     sdk: flutter
-
-flutter:
-  uses-material-design: true

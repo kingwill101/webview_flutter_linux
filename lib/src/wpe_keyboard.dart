@@ -1,20 +1,21 @@
-// SPDX-License-Identifier: UNLICENSED
+// Copyright 2026 The webview_flutter_linux authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
 
 import 'package:flutter/services.dart';
 
-const cefKeyEventRawKeyDown = 0;
-const cefKeyEventKeyUp = 2;
-const cefKeyEventCharacter = 3;
+const webViewKeyEventRawKeyDown = 0;
+const webViewKeyEventKeyUp = 2;
 
-const cefEventFlagCapsLockOn = 1 << 0;
-const cefEventFlagShiftDown = 1 << 1;
-const cefEventFlagControlDown = 1 << 2;
-const cefEventFlagAltDown = 1 << 3;
-const cefEventFlagLeftMouseButton = 1 << 4;
-const cefEventFlagMiddleMouseButton = 1 << 5;
-const cefEventFlagRightMouseButton = 1 << 6;
-const cefEventFlagCommandDown = 1 << 7;
-const cefEventFlagNumLockOn = 1 << 8;
+const webViewEventFlagCapsLockOn = 1 << 0;
+const webViewEventFlagShiftDown = 1 << 1;
+const webViewEventFlagControlDown = 1 << 2;
+const webViewEventFlagAltDown = 1 << 3;
+const webViewEventFlagLeftMouseButton = 1 << 4;
+const webViewEventFlagMiddleMouseButton = 1 << 5;
+const webViewEventFlagRightMouseButton = 1 << 6;
+const webViewEventFlagCommandDown = 1 << 7;
+const webViewEventFlagNumLockOn = 1 << 8;
 
 final _specialWindowsKeyCodes = <LogicalKeyboardKey, int>{
   LogicalKeyboardKey.backspace: 0x08,
@@ -58,7 +59,7 @@ final _specialWindowsKeyCodes = <LogicalKeyboardKey, int>{
   LogicalKeyboardKey.scrollLock: 0x91,
 };
 
-int? cefWindowsKeyCode(LogicalKeyboardKey key) {
+int? webViewWindowsKeyCode(LogicalKeyboardKey key) {
   final special = _specialWindowsKeyCodes[key];
   if (special != null) return special;
 
@@ -72,7 +73,7 @@ int? cefWindowsKeyCode(LogicalKeyboardKey key) {
   return label.codeUnitAt(0);
 }
 
-int cefKeyboardModifiers({
+int webViewKeyboardModifiers({
   required bool shift,
   required bool control,
   required bool alt,
@@ -80,10 +81,10 @@ int cefKeyboardModifiers({
   required bool capsLock,
   required bool numLock,
 }) {
-  return (shift ? cefEventFlagShiftDown : 0) |
-      (control ? cefEventFlagControlDown : 0) |
-      (alt ? cefEventFlagAltDown : 0) |
-      (meta ? cefEventFlagCommandDown : 0) |
-      (capsLock ? cefEventFlagCapsLockOn : 0) |
-      (numLock ? cefEventFlagNumLockOn : 0);
+  return (shift ? webViewEventFlagShiftDown : 0) |
+      (control ? webViewEventFlagControlDown : 0) |
+      (alt ? webViewEventFlagAltDown : 0) |
+      (meta ? webViewEventFlagCommandDown : 0) |
+      (capsLock ? webViewEventFlagCapsLockOn : 0) |
+      (numLock ? webViewEventFlagNumLockOn : 0);
 }

@@ -1,4 +1,6 @@
-// SPDX-License-Identifier: UNLICENSED
+// Copyright 2026 The webview_flutter_linux authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
 
 use std::{
     cell::RefCell,
@@ -518,8 +520,7 @@ unsafe fn copy_rendered_dma_buf(buffer: *mut WpeBuffer) -> i32 {
     HEIGHT_PX.store(height as u32, Ordering::Release);
     FIRST_PLANE_STRIDE.store(frame.strides[0], Ordering::Release);
 
-    let resize_status =
-        crate::cef_texture_browser_flutter_texture_resize(width as u32, height as u32);
+    let resize_status = crate::webview_flutter_linux_texture_resize(width as u32, height as u32);
     if resize_status != 0 {
         return resize_status;
     }
@@ -527,7 +528,7 @@ unsafe fn copy_rendered_dma_buf(buffer: *mut WpeBuffer) -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn cef_texture_browser_wpe_initialize(initial_url: *const c_char) -> i32 {
+pub extern "C" fn webview_flutter_linux_wpe_initialize(initial_url: *const c_char) -> i32 {
     let initial_url = match required_c_string(initial_url) {
         Ok(value) => value,
         Err(status) => return status,
@@ -559,7 +560,7 @@ pub extern "C" fn cef_texture_browser_wpe_initialize(initial_url: *const c_char)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn cef_texture_browser_wpe_shutdown() -> i32 {
+pub extern "C" fn webview_flutter_linux_wpe_shutdown() -> i32 {
     CONTEXT_MENU.with_borrow_mut(|menu| menu.take());
     if RUNTIME.with_borrow_mut(Option::take).is_some() {
         0
@@ -608,14 +609,14 @@ fn with_clipboard<T>(fallback: T, operation: impl FnOnce(*mut WpeClipboard) -> T
 const UTF8_TEXT_FORMAT: &[u8] = b"text/plain;charset=utf-8\0";
 
 #[unsafe(no_mangle)]
-pub extern "C" fn cef_texture_browser_wpe_clipboard_change_count() -> i64 {
+pub extern "C" fn webview_flutter_linux_wpe_clipboard_change_count() -> i64 {
     with_clipboard(-1, |clipboard| unsafe {
         wpe_clipboard_get_change_count(clipboard)
     })
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn cef_texture_browser_wpe_clipboard_text_length() -> isize {
+pub extern "C" fn webview_flutter_linux_wpe_clipboard_text_length() -> isize {
     with_clipboard(-1, |clipboard| {
         let mut length = 0;
         let text = unsafe {
@@ -631,7 +632,7 @@ pub extern "C" fn cef_texture_browser_wpe_clipboard_text_length() -> isize {
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn cef_texture_browser_wpe_clipboard_copy_text(
+pub unsafe extern "C" fn webview_flutter_linux_wpe_clipboard_copy_text(
     destination: *mut u8,
     destination_length: usize,
 ) -> i32 {
@@ -659,7 +660,7 @@ pub unsafe extern "C" fn cef_texture_browser_wpe_clipboard_copy_text(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn cef_texture_browser_wpe_clipboard_set_text(text: *const c_char) -> i32 {
+pub unsafe extern "C" fn webview_flutter_linux_wpe_clipboard_set_text(text: *const c_char) -> i32 {
     if text.is_null() || unsafe { CStr::from_ptr(text) }.to_str().is_err() {
         return -1;
     }
@@ -678,22 +679,22 @@ pub unsafe extern "C" fn cef_texture_browser_wpe_clipboard_set_text(text: *const
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn cef_texture_browser_wpe_context_menu_generation() -> u64 {
+pub extern "C" fn webview_flutter_linux_wpe_context_menu_generation() -> u64 {
     CONTEXT_MENU_GENERATION.load(Ordering::Acquire)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn cef_texture_browser_wpe_context_menu_x() -> f64 {
+pub extern "C" fn webview_flutter_linux_wpe_context_menu_x() -> f64 {
     CONTEXT_MENU.with_borrow(|menu| menu.as_ref().map_or(0.0, |menu| menu.x))
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn cef_texture_browser_wpe_context_menu_y() -> f64 {
+pub extern "C" fn webview_flutter_linux_wpe_context_menu_y() -> f64 {
     CONTEXT_MENU.with_borrow(|menu| menu.as_ref().map_or(0.0, |menu| menu.y))
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn cef_texture_browser_wpe_context_menu_item_count() -> u32 {
+pub extern "C" fn webview_flutter_linux_wpe_context_menu_item_count() -> u32 {
     CONTEXT_MENU.with_borrow(|snapshot| {
         snapshot
             .as_ref()
@@ -702,12 +703,12 @@ pub extern "C" fn cef_texture_browser_wpe_context_menu_item_count() -> u32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn cef_texture_browser_wpe_context_menu_item_title_length(index: u32) -> usize {
+pub extern "C" fn webview_flutter_linux_wpe_context_menu_item_title_length(index: u32) -> usize {
     with_context_menu_item(index, 0, |item| item.title.len())
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn cef_texture_browser_wpe_context_menu_item_copy_title(
+pub unsafe extern "C" fn webview_flutter_linux_wpe_context_menu_item_copy_title(
     index: u32,
     destination: *mut u8,
     destination_length: usize,
@@ -727,12 +728,12 @@ pub unsafe extern "C" fn cef_texture_browser_wpe_context_menu_item_copy_title(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn cef_texture_browser_wpe_context_menu_item_is_separator(index: u32) -> i32 {
+pub extern "C" fn webview_flutter_linux_wpe_context_menu_item_is_separator(index: u32) -> i32 {
     with_context_menu_item(index, 0, |item| i32::from(item.is_separator))
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn cef_texture_browser_wpe_context_menu_item_is_enabled(index: u32) -> i32 {
+pub extern "C" fn webview_flutter_linux_wpe_context_menu_item_is_enabled(index: u32) -> i32 {
     with_context_menu_item(index, 0, |item| {
         if item.action.is_null() {
             0
@@ -743,7 +744,7 @@ pub extern "C" fn cef_texture_browser_wpe_context_menu_item_is_enabled(index: u3
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn cef_texture_browser_wpe_context_menu_activate(index: u32) -> i32 {
+pub extern "C" fn webview_flutter_linux_wpe_context_menu_activate(index: u32) -> i32 {
     let status = with_context_menu_item(index, -2, |item| {
         if item.action.is_null() || unsafe { g_action_get_enabled(item.action) } == 0 {
             return -3;
@@ -758,12 +759,12 @@ pub extern "C" fn cef_texture_browser_wpe_context_menu_activate(index: u32) -> i
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn cef_texture_browser_wpe_context_menu_dismiss() -> i32 {
+pub extern "C" fn webview_flutter_linux_wpe_context_menu_dismiss() -> i32 {
     i32::from(CONTEXT_MENU.with_borrow_mut(|menu| menu.take()).is_none())
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn cef_texture_browser_wpe_pump() -> i32 {
+pub extern "C" fn webview_flutter_linux_wpe_pump() -> i32 {
     if !RUNTIME.with_borrow(|runtime| runtime.is_some()) {
         return -1;
     }
@@ -778,7 +779,7 @@ pub extern "C" fn cef_texture_browser_wpe_pump() -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn cef_texture_browser_wpe_navigate(url: *const c_char) -> i32 {
+pub extern "C" fn webview_flutter_linux_wpe_navigate(url: *const c_char) -> i32 {
     let url =
         match required_c_string(url).and_then(|url| std::ffi::CString::new(url).map_err(|_| -2)) {
             Ok(url) => url,
@@ -797,7 +798,7 @@ pub extern "C" fn cef_texture_browser_wpe_navigate(url: *const c_char) -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn cef_texture_browser_wpe_resize(width: u32, height: u32) -> i32 {
+pub extern "C" fn webview_flutter_linux_wpe_resize(width: u32, height: u32) -> i32 {
     if width == 0 || height == 0 || width > 16_384 || height > 16_384 {
         return -1;
     }
@@ -816,7 +817,7 @@ pub extern "C" fn cef_texture_browser_wpe_resize(width: u32, height: u32) -> i32
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn cef_texture_browser_wpe_set_focus(focused: i32) -> i32 {
+pub extern "C" fn webview_flutter_linux_wpe_set_focus(focused: i32) -> i32 {
     with_view(|view| unsafe {
         if focused != 0 {
             wpe_view_focus_in(view);
@@ -827,7 +828,7 @@ pub extern "C" fn cef_texture_browser_wpe_set_focus(focused: i32) -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn cef_texture_browser_wpe_set_visibility(visible: i32) -> i32 {
+pub extern "C" fn webview_flutter_linux_wpe_set_visibility(visible: i32) -> i32 {
     with_view(|view| unsafe { wpe_view_set_visible(view, i32::from(visible != 0)) })
 }
 
@@ -1039,7 +1040,7 @@ unsafe fn dispatch_event(view: *mut WpeView, event: *mut WpeEvent) {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn cef_texture_browser_wpe_send_mouse_move(
+pub extern "C" fn webview_flutter_linux_wpe_send_mouse_move(
     x: i32,
     y: i32,
     modifiers: u32,
@@ -1068,7 +1069,7 @@ pub extern "C" fn cef_texture_browser_wpe_send_mouse_move(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn cef_texture_browser_wpe_send_mouse_button(
+pub extern "C" fn webview_flutter_linux_wpe_send_mouse_button(
     x: i32,
     y: i32,
     modifiers: u32,
@@ -1103,7 +1104,7 @@ pub extern "C" fn cef_texture_browser_wpe_send_mouse_button(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn cef_texture_browser_wpe_send_mouse_wheel(
+pub extern "C" fn webview_flutter_linux_wpe_send_mouse_wheel(
     x: i32,
     y: i32,
     modifiers: u32,
@@ -1130,7 +1131,7 @@ pub extern "C" fn cef_texture_browser_wpe_send_mouse_wheel(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn cef_texture_browser_wpe_send_key(
+pub extern "C" fn webview_flutter_linux_wpe_send_key(
     event_type: u32,
     modifiers: u32,
     windows_key_code: i32,
@@ -1160,47 +1161,47 @@ pub extern "C" fn cef_texture_browser_wpe_send_key(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn cef_texture_browser_wpe_frame_generation() -> u64 {
+pub extern "C" fn webview_flutter_linux_wpe_frame_generation() -> u64 {
     FRAME_GENERATION.load(Ordering::Acquire)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn cef_texture_browser_wpe_paint_count() -> u64 {
+pub extern "C" fn webview_flutter_linux_wpe_paint_count() -> u64 {
     PAINT_COUNT.load(Ordering::Acquire)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn cef_texture_browser_wpe_valid_paint_count() -> u64 {
+pub extern "C" fn webview_flutter_linux_wpe_valid_paint_count() -> u64 {
     VALID_PAINT_COUNT.load(Ordering::Acquire)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn cef_texture_browser_wpe_plane_count() -> u32 {
+pub extern "C" fn webview_flutter_linux_wpe_plane_count() -> u32 {
     PLANE_COUNT.load(Ordering::Acquire)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn cef_texture_browser_wpe_format() -> u32 {
+pub extern "C" fn webview_flutter_linux_wpe_format() -> u32 {
     FORMAT.load(Ordering::Acquire)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn cef_texture_browser_wpe_modifier() -> u64 {
+pub extern "C" fn webview_flutter_linux_wpe_modifier() -> u64 {
     MODIFIER.load(Ordering::Acquire)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn cef_texture_browser_wpe_width() -> u32 {
+pub extern "C" fn webview_flutter_linux_wpe_width() -> u32 {
     WIDTH_PX.load(Ordering::Acquire)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn cef_texture_browser_wpe_height() -> u32 {
+pub extern "C" fn webview_flutter_linux_wpe_height() -> u32 {
     HEIGHT_PX.load(Ordering::Acquire)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn cef_texture_browser_wpe_first_plane_stride() -> u32 {
+pub extern "C" fn webview_flutter_linux_wpe_first_plane_stride() -> u32 {
     FIRST_PLANE_STRIDE.load(Ordering::Acquire)
 }
 

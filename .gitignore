@@ -31,6 +31,8 @@ migrate_working_dir/
 .pub-cache/
 .pub/
 /build/
+/example/build/
+/pubspec.lock
 /coverage/
 /rust/target/
 /third_party/cef/

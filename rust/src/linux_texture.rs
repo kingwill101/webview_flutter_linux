@@ -1,8 +1,6 @@
-// SPDX-License-Identifier: UNLICENSED
-#![cfg_attr(
-    not(any(feature = "cef-runtime", feature = "wpe-runtime")),
-    allow(dead_code)
-)]
+// Copyright 2026 The webview_flutter_linux authors. All rights reserved.
+// Use of this source code is governed by a BSD-style license that can be
+// found in the LICENSE file.
 
 use std::{
     ffi::{c_char, c_void},
@@ -555,7 +553,7 @@ pub(crate) fn copy_dma_buf(frame: &DmaBufFrame) -> i32 {
     }
 
     // SAFETY: The copy context is private to this state, shares Flutter's
-    // texture namespace, and is restored before returning to CEF.
+    // texture namespace, and is restored before returning to WPE.
     let status = unsafe { copy_dma_buf_locked(&mut state, frame) };
     status
 }

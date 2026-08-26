@@ -1,0 +1,23 @@
+name: webview_flutter_linux_example
+description: Demonstrates webview_flutter_linux with the official WebView API.
+publish_to: none
+version: 1.0.0+1
+
+environment:
+  sdk: ^3.10.0
+
+dependencies:
+  flutter:
+    sdk: flutter
+  marionette_flutter: ^0.6.0
+  webview_flutter: ^4.14.1
+  webview_flutter_linux:
+    path: ../
+
+dev_dependencies:
+  flutter_lints: ^6.0.0
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  uses-material-design: true

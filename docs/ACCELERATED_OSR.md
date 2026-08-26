@@ -47,7 +47,7 @@ remain in Rust.
 ## Implementation phases and gates
 
 1. **Capability probe — implemented and verified on the development host**
-   - Select the opt-in ABI v4 transport with
+   - Select the opt-in ABI v5 transport with
      `ZIKZAK_CEF_ACCELERATED_PROBE=1`.
    - Enable `shared_texture_enabled`, GPU compositing, `--use-angle=gl-egl`,
      and an explicitly selected Ozone platform.
@@ -73,21 +73,34 @@ remain in Rust.
    - Validate every plane, stride, offset, modifier, coded size, and visible
      rectangle.
    - Import the borrowed DMA-BUF as an EGL image in a shared context.
-   - Copy into the application-owned RGBA8 texture, finish the GL work, and
-     destroy the EGL image before returning. The CEF fd is borrowed only for
-     the synchronous call and is never closed or retained by the host.
+   - Copy into the next slot of a three-texture application-owned RGBA8 ring,
+     wait on a bounded GL fence, and destroy the EGL image before returning.
+     A fence timeout or unavailable fence falls back to `glFinish` and is
+     exposed as a diagnostic counter. The CEF fd is borrowed only for the
+     synchronous call and is never closed or retained by the host.
    - Gate: no CEF handle or imported image is retained after callback return.
    - Evidence: example.com and the local asymmetric smoke page rendered upright
      at 1878x746 through `FlTextureGL`; mouse click and direct keyboard input
      updated the smoke page through the same accelerated surface.
 
-4. **Publication and fallback — initial implementation**
+4. **Publication and fallback — implemented and stress-checked on the development host**
    - Publish only completed/fenced slots to Flutter and mark a texture frame
      available.
+   - Reject destination/visible-size mismatches instead of presenting a
+     filtered or stale-size browser frame.
    - Keep CPU OSR selectable as a diagnostic fallback, not as an implicit copy
      inside the accelerated path.
-   - Gate remaining: wheel, DPR changes, rapid resize, and repeated lifecycle
-     transitions pass the same smoke flow on both transports.
+   - Close the browser during runner shutdown, pump until `on_before_close`,
+     then release the runtime and unload the native library.
+   - Evidence: the animated local smoke page advanced 189 paints in a
+     three-second sample, all valid; the GL name rotated through the texture
+     ring; 918×634, 1240×449, and 960×303 surfaces all reported 1:1; copy time
+     peaked at 10.442 ms during the observed run with zero fence fallbacks;
+     click and direct keyboard input updated the page; normal window close left
+     no application or CEF helper processes.
+   - Gate remaining: DPR changes, hidden/minimized windows, rapid resize loops,
+     and repeated lifecycle transitions pass the same smoke flow on both
+     transports.
 
 5. **Performance and correctness**
    - Measure CEF callback time, GPU copy time, Flutter frame pacing, dropped

@@ -1,8 +1,9 @@
 // SPDX-License-Identifier: UNLICENSED
 
 use cef::{
-    self, Browser, ImplApp, ImplClient, ImplRenderHandler, PaintElementType, Rect, RenderHandler,
-    WrapApp, WrapClient, WrapRenderHandler, args::Args, rc::Rc, *,
+    self, Browser, ImplApp, ImplClient, ImplLifeSpanHandler, ImplRenderHandler, LifeSpanHandler,
+    PaintElementType, Rect, RenderHandler, WrapApp, WrapClient, WrapLifeSpanHandler,
+    WrapRenderHandler, args::Args, rc::Rc, *,
 };
 use std::{
     cell::RefCell,
@@ -10,8 +11,9 @@ use std::{
     path::PathBuf,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
+    time::{Duration, Instant},
 };
 
 use crate::{HEIGHT, WIDTH};
@@ -311,10 +313,23 @@ wrap_context_menu_handler! {
     }
 }
 
+wrap_life_span_handler! {
+    struct WindowlessLifeSpanHandler {
+        browser_closed: Arc<AtomicBool>,
+    }
+
+    impl LifeSpanHandler {
+        fn on_before_close(&self, _browser: Option<&mut Browser>) {
+            self.browser_closed.store(true, Ordering::Release);
+        }
+    }
+}
+
 wrap_client! {
     struct ClientBuilder {
         render_handler: RenderHandler,
         context_menu_handler: ContextMenuHandler,
+        life_span_handler: LifeSpanHandler,
     }
 
     impl Client {
@@ -325,14 +340,19 @@ wrap_client! {
         fn context_menu_handler(&self) -> Option<ContextMenuHandler> {
             Some(self.context_menu_handler.clone())
         }
+
+        fn life_span_handler(&self) -> Option<LifeSpanHandler> {
+            Some(self.life_span_handler.clone())
+        }
     }
 }
 
 impl ClientBuilder {
-    fn build(handler: BrowserRenderHandler) -> Client {
+    fn build(handler: BrowserRenderHandler, browser_closed: Arc<AtomicBool>) -> Client {
         Self::new(
             RenderHandlerBuilder::build(handler),
             WindowlessContextMenuHandler::new(),
+            WindowlessLifeSpanHandler::new(browser_closed),
         )
     }
 }
@@ -417,6 +437,7 @@ struct CefRuntime {
     latest_frame: Arc<Mutex<LatestFrame>>,
     accelerated_paint: Arc<Mutex<AcceleratedPaintSnapshot>>,
     surface: Arc<Mutex<SurfaceMetrics>>,
+    browser_closed: Arc<AtomicBool>,
     accelerated: bool,
 }
 
@@ -521,6 +542,7 @@ pub extern "C" fn zikzak_cef_initialize_with_options(
     let latest_frame = Arc::new(Mutex::new(LatestFrame::default()));
     let accelerated_paint = Arc::new(Mutex::new(AcceleratedPaintSnapshot::default()));
     let surface = Arc::new(Mutex::new(SurfaceMetrics::default()));
+    let browser_closed = Arc::new(AtomicBool::new(false));
     let window_info = cef::WindowInfo {
         windowless_rendering_enabled: true as _,
         shared_texture_enabled: accelerated as _,
@@ -529,16 +551,19 @@ pub extern "C" fn zikzak_cef_initialize_with_options(
         ..Default::default()
     };
     let browser_settings = cef::BrowserSettings {
-        windowless_frame_rate: 30,
+        windowless_frame_rate: 60,
         ..Default::default()
     };
     let browser = cef::browser_host_create_browser_sync(
         Some(&window_info),
-        Some(&mut ClientBuilder::build(BrowserRenderHandler {
-            latest_frame: latest_frame.clone(),
-            accelerated_paint: accelerated_paint.clone(),
-            surface: surface.clone(),
-        })),
+        Some(&mut ClientBuilder::build(
+            BrowserRenderHandler {
+                latest_frame: latest_frame.clone(),
+                accelerated_paint: accelerated_paint.clone(),
+                surface: surface.clone(),
+            },
+            browser_closed.clone(),
+        )),
         Some(&initial_url.as_str().into()),
         Some(&browser_settings),
         None,
@@ -556,9 +581,42 @@ pub extern "C" fn zikzak_cef_initialize_with_options(
             latest_frame,
             accelerated_paint,
             surface,
+            browser_closed,
             accelerated,
         });
     });
+    0
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn zikzak_cef_shutdown() -> i32 {
+    let Some((browser, browser_closed)) = RUNTIME.with_borrow(|runtime| {
+        runtime
+            .as_ref()
+            .map(|runtime| (runtime.browser.clone(), runtime.browser_closed.clone()))
+    }) else {
+        return 1;
+    };
+
+    let Some(host) = browser.host() else {
+        return -1;
+    };
+    host.close_browser(1);
+
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !browser_closed.load(Ordering::Acquire) && Instant::now() < deadline {
+        cef::do_message_loop_work();
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    if !browser_closed.load(Ordering::Acquire) {
+        return -2;
+    }
+
+    drop(host);
+    drop(browser);
+    let runtime = RUNTIME.with_borrow_mut(Option::take);
+    drop(runtime);
+    cef::shutdown();
     0
 }
 
@@ -952,8 +1010,10 @@ mod tests {
     use super::*;
 
     fn valid_accelerated_paint_info() -> AcceleratedPaintInfo {
-        let mut info = AcceleratedPaintInfo::default();
-        info.plane_count = 1;
+        let mut info = AcceleratedPaintInfo {
+            plane_count: 1,
+            ..Default::default()
+        };
         info.planes[0].fd = 7;
         info.planes[0].stride = 2_560;
         info.planes[0].size = 1_228_800;

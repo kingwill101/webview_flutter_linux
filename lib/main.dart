@@ -212,7 +212,10 @@ class _ProbePageState extends State<ProbePage> with WidgetsBindingObserver {
                 if (renderer != null)
                   _StatusChip(
                     icon: Icons.aspect_ratio,
-                    label: '${renderer.width}×${renderer.height} RGBA',
+                    label: renderer.acceleratedProbe
+                        ? '${renderer.textureWidth}×${renderer.textureHeight} '
+                              'GL · ${_pixelScaleLabel(renderer)}'
+                        : '${renderer.width}×${renderer.height} RGBA',
                   ),
                 if (renderer?.cefEnabled ?? false)
                   _StatusChip(
@@ -240,7 +243,9 @@ class _ProbePageState extends State<ProbePage> with WidgetsBindingObserver {
                   ),
                 _StatusChip(
                   icon: Icons.movie_filter_outlined,
-                  label: 'Frames: $_framesRendered',
+                  label: renderer?.acceleratedProbe ?? false
+                      ? 'Copies: ${renderer!.textureDmaBufCopyCount}'
+                      : 'Frames: $_framesRendered',
                 ),
               ],
             ),
@@ -336,8 +341,20 @@ class _ProbePageState extends State<ProbePage> with WidgetsBindingObserver {
     if (generation == 0) {
       return 'test frame · callback ${renderer.dmaBufCallbackGeneration}';
     }
-    if (status == 0) return 'DMA-BUF frame $generation';
+    if (status == 0) {
+      return 'DMA-BUF frame $generation · '
+          '${renderer.textureDmaBufLastCopyMicros}µs last · '
+          '${renderer.textureDmaBufMaxCopyMicros}µs max · '
+          '${renderer.textureDmaBufFenceFallbackCount} fallback';
+    }
     return 'DMA-BUF error $status';
+  }
+
+  String _pixelScaleLabel(NativeFrameRenderer renderer) {
+    final exact =
+        renderer.textureWidth == renderer.acceleratedVisibleWidth &&
+        renderer.textureHeight == renderer.acceleratedVisibleHeight;
+    return exact ? '1:1' : 'waiting for 1:1';
   }
 
   void _navigate() {

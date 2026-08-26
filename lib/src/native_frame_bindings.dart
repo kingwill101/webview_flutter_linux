@@ -55,6 +55,26 @@ external int zikzakFlutterTextureDmaBufGeneration();
 )
 external int zikzakFlutterTextureDmaBufStatus();
 
+@ffi.Native<ffi.Uint64 Function()>(
+  symbol: 'zikzak_flutter_texture_dma_buf_copy_count',
+)
+external int zikzakFlutterTextureDmaBufCopyCount();
+
+@ffi.Native<ffi.Uint64 Function()>(
+  symbol: 'zikzak_flutter_texture_dma_buf_last_copy_micros',
+)
+external int zikzakFlutterTextureDmaBufLastCopyMicros();
+
+@ffi.Native<ffi.Uint64 Function()>(
+  symbol: 'zikzak_flutter_texture_dma_buf_max_copy_micros',
+)
+external int zikzakFlutterTextureDmaBufMaxCopyMicros();
+
+@ffi.Native<ffi.Uint64 Function()>(
+  symbol: 'zikzak_flutter_texture_dma_buf_fence_fallback_count',
+)
+external int zikzakFlutterTextureDmaBufFenceFallbackCount();
+
 @ffi.Native<ffi.Int32 Function(ffi.Pointer<ffi.Uint8>, ffi.Size, ffi.Uint64)>(
   symbol: 'zikzak_render_test_frame',
 )

@@ -52,9 +52,15 @@ uint32_t zikzak_flutter_texture_gl_name(void);
 uintptr_t zikzak_flutter_texture_egl_display(void);
 uintptr_t zikzak_flutter_texture_egl_context(void);
 void zikzak_flutter_texture_publish_dma_buf_result(uint64_t generation,
-                                                   int32_t status);
+                                                   int32_t status,
+                                                   uint64_t copy_micros,
+                                                   int32_t fence_fallback);
 uint64_t zikzak_flutter_texture_dma_buf_generation(void);
 int32_t zikzak_flutter_texture_dma_buf_status(void);
+uint64_t zikzak_flutter_texture_dma_buf_copy_count(void);
+uint64_t zikzak_flutter_texture_dma_buf_last_copy_micros(void);
+uint64_t zikzak_flutter_texture_dma_buf_max_copy_micros(void);
+uint64_t zikzak_flutter_texture_dma_buf_fence_fallback_count(void);
 int32_t zikzak_flutter_texture_render_test_frame(uint8_t *destination,
                                                  size_t destination_length,
                                                  uint32_t width,
@@ -68,6 +74,7 @@ int32_t zikzak_cef_initialize(const char *runtime_directory,
 int32_t zikzak_cef_initialize_with_options(const char *runtime_directory,
                                            const char *initial_url,
                                            uint32_t transport);
+int32_t zikzak_cef_shutdown(void);
 int32_t zikzak_cef_pump(void);
 uint64_t zikzak_cef_accelerated_paint_count(void);
 uint64_t zikzak_cef_accelerated_valid_paint_count(void);

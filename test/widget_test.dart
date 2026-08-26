@@ -26,7 +26,7 @@ void main() {
       findsOneWidget,
       reason: failureDetails.isEmpty ? null : failureDetails,
     );
-    expect(find.text('ABI v4'), findsOneWidget);
+    expect(find.text('ABI v5'), findsOneWidget);
     expect(find.text('800×450 RGBA'), findsOneWidget);
     expect(find.text('Frames: 1'), findsOneWidget);
 

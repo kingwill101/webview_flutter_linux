@@ -25,16 +25,20 @@ typedef int32_t (*ZikzakPublishGlStateFn)(uint32_t name, uint32_t width,
                                           uint32_t height,
                                           uintptr_t egl_display,
                                           uintptr_t egl_context);
-typedef void (*ZikzakPublishDmaBufResultFn)(uint64_t generation,
-                                            int32_t status);
+typedef void (*ZikzakPublishDmaBufResultFn)(uint64_t generation, int32_t status,
+                                            uint64_t copy_micros,
+                                            int32_t fence_fallback);
 typedef int32_t (*ZikzakDmaBufCopyAttachFn)(
     zikzak_dma_buf_copy_callback callback, void *user_data);
 typedef void (*ZikzakDmaBufCopyDetachFn)(void *user_data);
+typedef int32_t (*ZikzakCefShutdownFn)(void);
 
 typedef struct _ZikzakNativeTexture {
   FlTextureGL parent_instance;
   GMutex gl_mutex;
   GLuint gl_name;
+  GLuint gl_names[3];
+  uint32_t published_slot;
   uint8_t *pixels;
   size_t pixel_capacity;
   uint64_t uploaded_generation;
@@ -67,6 +71,7 @@ struct _ZikzakNativeTextureBridge {
   int64_t texture_id;
   ZikzakDetachFn detach;
   ZikzakDmaBufCopyDetachFn detach_dma_buf_copy;
+  ZikzakCefShutdownFn shutdown_cef;
 };
 
 static void mark_texture_frame_available(void *user_data);
@@ -80,6 +85,8 @@ static GQuark zikzak_native_texture_error_quark(void) {
    ((uint32_t)(d) << 24))
 #define ZIKZAK_DRM_FORMAT_ARGB8888 ZIKZAK_FOURCC('A', 'R', '2', '4')
 #define ZIKZAK_DRM_FORMAT_ABGR8888 ZIKZAK_FOURCC('A', 'B', '2', '4')
+#define ZIKZAK_TEXTURE_SLOT_COUNT 3
+#define ZIKZAK_COPY_FENCE_TIMEOUT_NS 16000000ULL
 
 static uint32_t drm_format_for_cef(uint32_t format) {
   switch (format) {
@@ -137,8 +144,10 @@ static gboolean ensure_dma_buf_copy_context(ZikzakNativeTexture *self) {
 }
 
 static int32_t copy_dma_buf_to_flutter_texture(
-    ZikzakNativeTexture *self, const zikzak_dma_buf_frame *frame,
-    uint32_t destination_width, uint32_t destination_height) {
+    const zikzak_dma_buf_frame *frame, GLuint destination_name,
+    uint32_t destination_width, uint32_t destination_height,
+    gboolean *fence_fallback) {
+  *fence_fallback = FALSE;
   const EGLDisplay display = eglGetCurrentDisplay();
   if (display == EGL_NO_DISPLAY || eglGetCurrentContext() == EGL_NO_CONTEXT ||
       !epoxy_has_egl_extension(display, "EGL_EXT_image_dma_buf_import")) {
@@ -150,6 +159,10 @@ static int32_t copy_dma_buf_to_flutter_texture(
       frame->visible_width <= 0 || frame->visible_height <= 0 ||
       frame->offsets[0] > INT_MAX || frame->strides[0] > INT_MAX) {
     return -11;
+  }
+  if ((uint32_t)frame->visible_width != destination_width ||
+      (uint32_t)frame->visible_height != destination_height) {
+    return -15;
   }
 
   EGLint attributes[32];
@@ -207,7 +220,7 @@ static int32_t copy_dma_buf_to_flutter_texture(
   glGenFramebuffers(1, &draw_framebuffer);
   glBindFramebuffer(GL_DRAW_FRAMEBUFFER, draw_framebuffer);
   glFramebufferTexture2D(GL_DRAW_FRAMEBUFFER, GL_COLOR_ATTACHMENT0,
-                         GL_TEXTURE_2D, self->gl_name, 0);
+                         GL_TEXTURE_2D, destination_name, 0);
 
   int32_t status = 0;
   if (glCheckFramebufferStatus(GL_READ_FRAMEBUFFER) !=
@@ -223,7 +236,25 @@ static int32_t copy_dma_buf_to_flutter_texture(
     glBlitFramebuffer(source_x0, source_y0, source_x1, source_y1, 0, 0,
                       (GLint)destination_width, (GLint)destination_height,
                       GL_COLOR_BUFFER_BIT, GL_NEAREST);
-    glFinish();
+    GLsync fence = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+    if (fence == NULL) {
+      *fence_fallback = TRUE;
+      glFinish();
+    } else {
+      glFlush();
+      const GLenum wait_status = glClientWaitSync(
+          fence, GL_SYNC_FLUSH_COMMANDS_BIT, ZIKZAK_COPY_FENCE_TIMEOUT_NS);
+      glDeleteSync(fence);
+      if (wait_status == GL_TIMEOUT_EXPIRED || wait_status == GL_WAIT_FAILED) {
+        // CEF owns the DMA-BUF contents only for this callback. A bounded
+        // fence miss must fall back to completion before the image is released.
+        *fence_fallback = TRUE;
+        glFinish();
+      }
+      if (wait_status == GL_WAIT_FAILED) {
+        status = -16;
+      }
+    }
     if (glGetError() != GL_NO_ERROR) {
       status = -14;
     }
@@ -251,7 +282,7 @@ copy_dma_buf_during_cef_callback(const zikzak_dma_buf_frame *frame,
   if (texture->copy_context == EGL_NO_CONTEXT || texture->gl_name == 0 ||
       texture->allocated_width == 0 || texture->allocated_height == 0) {
     g_mutex_unlock(&texture->gl_mutex);
-    texture->publish_dma_buf_result(frame->generation, -31);
+    texture->publish_dma_buf_result(frame->generation, -31, 0, FALSE);
     mark_texture_frame_available(bridge);
     return -31;
   }
@@ -266,17 +297,28 @@ copy_dma_buf_during_cef_callback(const zikzak_dma_buf_frame *frame,
                       texture->copy_surface, texture->copy_context)) {
     eglBindAPI(previous_api);
     g_mutex_unlock(&texture->gl_mutex);
-    texture->publish_dma_buf_result(frame->generation, -32);
+    texture->publish_dma_buf_result(frame->generation, -32, 0, FALSE);
     mark_texture_frame_available(bridge);
     return -32;
   }
 
+  const uint32_t destination_slot =
+      (texture->published_slot + 1) % ZIKZAK_TEXTURE_SLOT_COUNT;
+  const GLuint destination_name = texture->gl_names[destination_slot];
+  const gint64 copy_started_micros = g_get_monotonic_time();
+  gboolean fence_fallback = FALSE;
   const int32_t status = copy_dma_buf_to_flutter_texture(
-      texture, frame, texture->allocated_width, texture->allocated_height);
+      frame, destination_name, texture->allocated_width,
+      texture->allocated_height, &fence_fallback);
+  const uint64_t copy_micros =
+      (uint64_t)(g_get_monotonic_time() - copy_started_micros);
   if (status == 0) {
+    texture->published_slot = destination_slot;
+    texture->gl_name = destination_name;
     texture->imported_dma_buf_generation = frame->generation;
   }
-  texture->publish_dma_buf_result(frame->generation, status);
+  texture->publish_dma_buf_result(frame->generation, status, copy_micros,
+                                  fence_fallback);
 
   if (previous_display != EGL_NO_DISPLAY) {
     eglMakeCurrent(previous_display, previous_draw, previous_read,
@@ -308,13 +350,17 @@ static gboolean zikzak_native_texture_populate(FlTextureGL *texture,
   }
   g_mutex_lock(&self->gl_mutex);
 
-  if (self->gl_name == 0) {
-    glGenTextures(1, &self->gl_name);
-    glBindTexture(GL_TEXTURE_2D, self->gl_name);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+  if (self->gl_names[0] == 0) {
+    glGenTextures(ZIKZAK_TEXTURE_SLOT_COUNT, self->gl_names);
+    for (uint32_t slot = 0; slot < ZIKZAK_TEXTURE_SLOT_COUNT; slot++) {
+      glBindTexture(GL_TEXTURE_2D, self->gl_names[slot]);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+    }
+    self->published_slot = 0;
+    self->gl_name = self->gl_names[0];
   } else {
     glBindTexture(GL_TEXTURE_2D, self->gl_name);
   }
@@ -322,8 +368,14 @@ static gboolean zikzak_native_texture_populate(FlTextureGL *texture,
   const gboolean storage_changed = self->allocated_width != next_width ||
                                    self->allocated_height != next_height;
   if (storage_changed) {
-    glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, (GLsizei)next_width,
-                 (GLsizei)next_height, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+    for (uint32_t slot = 0; slot < ZIKZAK_TEXTURE_SLOT_COUNT; slot++) {
+      glBindTexture(GL_TEXTURE_2D, self->gl_names[slot]);
+      glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, (GLsizei)next_width,
+                   (GLsizei)next_height, 0, GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+    }
+    self->published_slot = 0;
+    self->gl_name = self->gl_names[0];
+    glBindTexture(GL_TEXTURE_2D, self->gl_name);
     self->allocated_width = next_width;
     self->allocated_height = next_height;
     self->uploaded_generation = 0;
@@ -477,6 +529,7 @@ ZikzakNativeTextureBridge *zikzak_native_texture_bridge_new(FlView *view) {
   ZikzakPublishDmaBufResultFn publish_dma_buf_result = NULL;
   ZikzakDmaBufCopyAttachFn attach_dma_buf_copy = NULL;
   ZikzakDmaBufCopyDetachFn detach_dma_buf_copy = NULL;
+  ZikzakCefShutdownFn shutdown_cef = NULL;
   if (!load_symbol(module, "zikzak_flutter_texture_attach",
                    (gpointer *)&attach) ||
       !load_symbol(module, "zikzak_flutter_texture_detach",
@@ -496,7 +549,8 @@ ZikzakNativeTextureBridge *zikzak_native_texture_bridge_new(FlView *view) {
       !load_symbol(module, "zikzak_cef_dma_buf_copy_attach",
                    (gpointer *)&attach_dma_buf_copy) ||
       !load_symbol(module, "zikzak_cef_dma_buf_copy_detach",
-                   (gpointer *)&detach_dma_buf_copy)) {
+                   (gpointer *)&detach_dma_buf_copy) ||
+      !load_symbol(module, "zikzak_cef_shutdown", (gpointer *)&shutdown_cef)) {
     g_module_close(module);
     return NULL;
   }
@@ -505,6 +559,7 @@ ZikzakNativeTextureBridge *zikzak_native_texture_bridge_new(FlView *view) {
   bridge->native_module = module;
   bridge->detach = detach;
   bridge->detach_dma_buf_copy = detach_dma_buf_copy;
+  bridge->shutdown_cef = shutdown_cef;
   bridge->texture = g_object_new(zikzak_native_texture_get_type(), NULL);
   bridge->texture->get_width = get_width;
   bridge->texture->get_height = get_height;
@@ -553,6 +608,12 @@ void zikzak_native_texture_bridge_free(ZikzakNativeTextureBridge *bridge) {
   }
   g_clear_object(&bridge->texture);
   g_clear_object(&bridge->registrar);
+  if (bridge->shutdown_cef != NULL) {
+    const int32_t shutdown_status = bridge->shutdown_cef();
+    if (shutdown_status < 0) {
+      g_warning("CEF shutdown failed with status %d", shutdown_status);
+    }
+  }
   if (bridge->native_module != NULL) {
     g_module_close(bridge->native_module);
   }

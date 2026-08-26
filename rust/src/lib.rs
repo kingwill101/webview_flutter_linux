@@ -12,7 +12,7 @@ use std::{
 #[cfg(feature = "cef-runtime")]
 mod cef_runtime;
 
-const API_VERSION: u32 = 4;
+const API_VERSION: u32 = 5;
 const WIDTH: usize = 800;
 const HEIGHT: usize = 450;
 const BYTES_PER_PIXEL: usize = 4;
@@ -36,6 +36,10 @@ static FLUTTER_TEXTURE_EGL_DISPLAY: AtomicUsize = AtomicUsize::new(0);
 static FLUTTER_TEXTURE_EGL_CONTEXT: AtomicUsize = AtomicUsize::new(0);
 static FLUTTER_TEXTURE_DMA_BUF_GENERATION: AtomicU64 = AtomicU64::new(0);
 static FLUTTER_TEXTURE_DMA_BUF_STATUS: AtomicI64 = AtomicI64::new(0);
+static FLUTTER_TEXTURE_DMA_BUF_COPY_COUNT: AtomicU64 = AtomicU64::new(0);
+static FLUTTER_TEXTURE_DMA_BUF_LAST_COPY_MICROS: AtomicU64 = AtomicU64::new(0);
+static FLUTTER_TEXTURE_DMA_BUF_MAX_COPY_MICROS: AtomicU64 = AtomicU64::new(0);
+static FLUTTER_TEXTURE_DMA_BUF_FENCE_FALLBACK_COUNT: AtomicU64 = AtomicU64::new(0);
 static FLUTTER_TEXTURE_NOTIFIER: Mutex<Option<FlutterTextureNotifier>> = Mutex::new(None);
 
 #[unsafe(no_mangle)]
@@ -95,6 +99,10 @@ pub extern "C" fn zikzak_flutter_texture_detach(texture_id: i64) {
     FLUTTER_TEXTURE_EGL_CONTEXT.store(0, Ordering::Release);
     FLUTTER_TEXTURE_DMA_BUF_GENERATION.store(0, Ordering::Release);
     FLUTTER_TEXTURE_DMA_BUF_STATUS.store(0, Ordering::Release);
+    FLUTTER_TEXTURE_DMA_BUF_COPY_COUNT.store(0, Ordering::Release);
+    FLUTTER_TEXTURE_DMA_BUF_LAST_COPY_MICROS.store(0, Ordering::Release);
+    FLUTTER_TEXTURE_DMA_BUF_MAX_COPY_MICROS.store(0, Ordering::Release);
+    FLUTTER_TEXTURE_DMA_BUF_FENCE_FALLBACK_COUNT.store(0, Ordering::Release);
 }
 
 #[unsafe(no_mangle)]
@@ -150,9 +158,22 @@ pub(crate) fn notify_flutter_texture_frame() -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn zikzak_flutter_texture_publish_dma_buf_result(generation: u64, status: i32) {
+pub extern "C" fn zikzak_flutter_texture_publish_dma_buf_result(
+    generation: u64,
+    status: i32,
+    copy_micros: u64,
+    fence_fallback: i32,
+) {
     FLUTTER_TEXTURE_DMA_BUF_GENERATION.store(generation, Ordering::Release);
     FLUTTER_TEXTURE_DMA_BUF_STATUS.store(i64::from(status), Ordering::Release);
+    FLUTTER_TEXTURE_DMA_BUF_LAST_COPY_MICROS.store(copy_micros, Ordering::Release);
+    FLUTTER_TEXTURE_DMA_BUF_MAX_COPY_MICROS.fetch_max(copy_micros, Ordering::AcqRel);
+    if status == 0 {
+        FLUTTER_TEXTURE_DMA_BUF_COPY_COUNT.fetch_add(1, Ordering::AcqRel);
+    }
+    if fence_fallback != 0 {
+        FLUTTER_TEXTURE_DMA_BUF_FENCE_FALLBACK_COUNT.fetch_add(1, Ordering::AcqRel);
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -163,6 +184,26 @@ pub extern "C" fn zikzak_flutter_texture_dma_buf_generation() -> u64 {
 #[unsafe(no_mangle)]
 pub extern "C" fn zikzak_flutter_texture_dma_buf_status() -> i32 {
     FLUTTER_TEXTURE_DMA_BUF_STATUS.load(Ordering::Acquire) as i32
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn zikzak_flutter_texture_dma_buf_copy_count() -> u64 {
+    FLUTTER_TEXTURE_DMA_BUF_COPY_COUNT.load(Ordering::Acquire)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn zikzak_flutter_texture_dma_buf_last_copy_micros() -> u64 {
+    FLUTTER_TEXTURE_DMA_BUF_LAST_COPY_MICROS.load(Ordering::Acquire)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn zikzak_flutter_texture_dma_buf_max_copy_micros() -> u64 {
+    FLUTTER_TEXTURE_DMA_BUF_MAX_COPY_MICROS.load(Ordering::Acquire)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn zikzak_flutter_texture_dma_buf_fence_fallback_count() -> u64 {
+    FLUTTER_TEXTURE_DMA_BUF_FENCE_FALLBACK_COUNT.load(Ordering::Acquire)
 }
 
 #[unsafe(no_mangle)]
@@ -202,6 +243,12 @@ pub extern "C" fn zikzak_flutter_texture_egl_context() -> usize {
 }
 
 #[unsafe(no_mangle)]
+/// Renders the procedural startup frame into a dynamically sized caller buffer.
+///
+/// # Safety
+///
+/// `destination` must point to at least `destination_length` writable bytes and
+/// remain valid for the duration of this call.
 pub unsafe extern "C" fn zikzak_flutter_texture_render_test_frame(
     destination: *mut u8,
     destination_length: usize,
@@ -270,6 +317,11 @@ fn render_flutter_texture_test_frame(
 ///
 /// Returns zero on success, -1 for a null destination, and -2 if the supplied
 /// destination is smaller than a complete frame.
+///
+/// # Safety
+///
+/// `destination` must point to at least `destination_length` writable bytes and
+/// remain valid for the duration of this call.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn zikzak_render_test_frame(
     destination: *mut u8,

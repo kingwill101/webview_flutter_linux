@@ -77,6 +77,13 @@ final class NativeFrameRenderer {
       zikzakFlutterTextureEglContext() != 0;
   int get textureDmaBufGeneration => zikzakFlutterTextureDmaBufGeneration();
   int get textureDmaBufStatus => zikzakFlutterTextureDmaBufStatus();
+  int get textureDmaBufCopyCount => zikzakFlutterTextureDmaBufCopyCount();
+  int get textureDmaBufLastCopyMicros =>
+      zikzakFlutterTextureDmaBufLastCopyMicros();
+  int get textureDmaBufMaxCopyMicros =>
+      zikzakFlutterTextureDmaBufMaxCopyMicros();
+  int get textureDmaBufFenceFallbackCount =>
+      zikzakFlutterTextureDmaBufFenceFallbackCount();
   int get acceleratedPaintCount => zikzakCefAcceleratedPaintCount();
   int get acceleratedValidPaintCount => zikzakCefAcceleratedValidPaintCount();
   int get acceleratedPlaneCount => zikzakCefAcceleratedPlaneCount();

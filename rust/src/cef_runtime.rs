@@ -6,9 +6,12 @@ use cef::{
 };
 use std::{
     cell::RefCell,
-    ffi::{CStr, c_char},
+    ffi::{CStr, c_char, c_void},
     path::PathBuf,
-    sync::{Arc, Mutex},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicU64, Ordering},
+    },
 };
 
 use crate::{HEIGHT, WIDTH};
@@ -22,6 +25,50 @@ struct LatestFrame {
     height: u32,
     rgba: Vec<u8>,
 }
+
+#[derive(Clone, Copy, Default)]
+struct AcceleratedPaintSnapshot {
+    paint_count: u64,
+    valid_paint_count: u64,
+    plane_count: u32,
+    format: u32,
+    modifier: u64,
+    coded_width: i32,
+    coded_height: i32,
+    visible_width: i32,
+    visible_height: i32,
+    first_plane_stride: u32,
+}
+
+#[repr(C)]
+pub struct ZikzakDmaBufFrame {
+    pub generation: u64,
+    pub plane_count: u32,
+    pub fds: [i32; 4],
+    pub strides: [u32; 4],
+    pub offsets: [u64; 4],
+    pub sizes: [u64; 4],
+    pub modifier: u64,
+    pub format: u32,
+    pub coded_width: i32,
+    pub coded_height: i32,
+    pub visible_x: i32,
+    pub visible_y: i32,
+    pub visible_width: i32,
+    pub visible_height: i32,
+}
+
+static DMA_BUF_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+type DmaBufCopyCallback = unsafe extern "C" fn(*const ZikzakDmaBufFrame, *mut c_void) -> i32;
+
+#[derive(Clone, Copy)]
+struct DmaBufCopyTarget {
+    callback: DmaBufCopyCallback,
+    user_data: usize,
+}
+
+static DMA_BUF_COPY_TARGET: Mutex<Option<DmaBufCopyTarget>> = Mutex::new(None);
 
 #[derive(Clone, Copy)]
 struct SurfaceMetrics {
@@ -41,14 +88,15 @@ impl Default for SurfaceMetrics {
 }
 
 #[derive(Clone)]
-struct CpuRenderHandler {
+struct BrowserRenderHandler {
     latest_frame: Arc<Mutex<LatestFrame>>,
+    accelerated_paint: Arc<Mutex<AcceleratedPaintSnapshot>>,
     surface: Arc<Mutex<SurfaceMetrics>>,
 }
 
 wrap_render_handler! {
     struct RenderHandlerBuilder {
-        handler: CpuRenderHandler,
+        handler: BrowserRenderHandler,
     }
 
     impl RenderHandler {
@@ -129,13 +177,106 @@ wrap_render_handler! {
             frame.height = height as u32;
             frame.generation = frame.generation.wrapping_add(1).max(1);
         }
+
+        fn on_accelerated_paint(
+            &self,
+            _browser: Option<&mut Browser>,
+            type_: PaintElementType,
+            _dirty_rects: Option<&[Rect]>,
+            info: Option<&AcceleratedPaintInfo>,
+        ) {
+            if type_ != PaintElementType::default() {
+                return;
+            }
+            let Some(info) = info else {
+                return;
+            };
+            let valid = accelerated_paint_info_is_valid(info);
+            if let Ok(mut snapshot) = self.handler.accelerated_paint.lock() {
+                snapshot.paint_count = snapshot.paint_count.wrapping_add(1).max(1);
+                snapshot.plane_count = u32::try_from(info.plane_count).unwrap_or_default();
+                snapshot.format = info.format.get_raw();
+                snapshot.modifier = info.modifier;
+                snapshot.coded_width = info.extra.coded_size.width;
+                snapshot.coded_height = info.extra.coded_size.height;
+                snapshot.visible_width = info.extra.visible_rect.width;
+                snapshot.visible_height = info.extra.visible_rect.height;
+                snapshot.first_plane_stride =
+                    info.planes.first().map_or(0, |plane| plane.stride);
+                if valid {
+                    snapshot.valid_paint_count =
+                        snapshot.valid_paint_count.wrapping_add(1).max(1);
+                }
+            }
+            if valid {
+                let generation = DMA_BUF_GENERATION
+                    .fetch_add(1, Ordering::AcqRel)
+                    .wrapping_add(1)
+                    .max(1);
+                copy_accelerated_frame_during_callback(info, generation);
+                crate::notify_flutter_texture_frame();
+            }
+        }
     }
 }
 
 impl RenderHandlerBuilder {
-    fn build(handler: CpuRenderHandler) -> RenderHandler {
+    fn build(handler: BrowserRenderHandler) -> RenderHandler {
         Self::new(handler)
     }
+}
+
+fn accelerated_paint_info_is_valid(info: &AcceleratedPaintInfo) -> bool {
+    let Ok(plane_count) = usize::try_from(info.plane_count) else {
+        return false;
+    };
+    if !(1..=info.planes.len()).contains(&plane_count)
+        || info.extra.coded_size.width <= 0
+        || info.extra.coded_size.height <= 0
+        || info.extra.visible_rect.width <= 0
+        || info.extra.visible_rect.height <= 0
+    {
+        return false;
+    }
+    info.planes[..plane_count]
+        .iter()
+        .all(|plane| plane.fd >= 0 && plane.stride > 0 && plane.size > 0)
+}
+
+fn copy_accelerated_frame_during_callback(info: &AcceleratedPaintInfo, generation: u64) -> i32 {
+    let target = match DMA_BUF_COPY_TARGET.lock() {
+        Ok(target) => *target,
+        Err(_) => return -2,
+    };
+    let Some(target) = target else {
+        return -1;
+    };
+    let plane_count = usize::try_from(info.plane_count).unwrap_or_default();
+    let mut frame = ZikzakDmaBufFrame {
+        generation,
+        plane_count: info.plane_count as u32,
+        fds: [-1; 4],
+        strides: [0; 4],
+        offsets: [0; 4],
+        sizes: [0; 4],
+        modifier: info.modifier,
+        format: info.format.get_raw(),
+        coded_width: info.extra.coded_size.width,
+        coded_height: info.extra.coded_size.height,
+        visible_x: info.extra.visible_rect.x,
+        visible_y: info.extra.visible_rect.y,
+        visible_width: info.extra.visible_rect.width,
+        visible_height: info.extra.visible_rect.height,
+    };
+    for (index, plane) in info.planes[..plane_count].iter().enumerate() {
+        frame.fds[index] = plane.fd;
+        frame.strides[index] = plane.stride;
+        frame.offsets[index] = plane.offset;
+        frame.sizes[index] = plane.size;
+    }
+    // SAFETY: The callback is synchronously invoked while CEF's DMA-BUF
+    // descriptors and this stack-allocated metadata remain valid.
+    unsafe { (target.callback)(&frame, target.user_data as *mut c_void) }
 }
 
 wrap_context_menu_handler! {
@@ -188,7 +329,7 @@ wrap_client! {
 }
 
 impl ClientBuilder {
-    fn build(handler: CpuRenderHandler) -> Client {
+    fn build(handler: BrowserRenderHandler) -> Client {
         Self::new(
             RenderHandlerBuilder::build(handler),
             WindowlessContextMenuHandler::new(),
@@ -197,7 +338,10 @@ impl ClientBuilder {
 }
 
 #[derive(Clone)]
-struct BrowserApp;
+struct BrowserApp {
+    accelerated: bool,
+    ozone_platform: String,
+}
 
 wrap_app! {
     struct AppBuilder {
@@ -217,17 +361,53 @@ wrap_app! {
             command_line.append_switch(Some(&"no-first-run".into()));
             command_line.append_switch(Some(&"disable-default-apps".into()));
             command_line.append_switch(Some(&"use-alloy-style".into()));
-            command_line.append_switch(Some(&"disable-gpu".into()));
-            command_line.append_switch(Some(&"disable-gpu-compositing".into()));
             command_line.append_switch(Some(&"disable-dev-shm-usage".into()));
             command_line.append_switch(Some(&"no-sandbox".into()));
+            if self.app.accelerated {
+                command_line.append_switch_with_value(
+                    Some(&"use-angle".into()),
+                    Some(&"gl-egl".into()),
+                );
+                command_line.append_switch_with_value(
+                    Some(&"ozone-platform".into()),
+                    Some(&self.app.ozone_platform.as_str().into()),
+                );
+            } else {
+                command_line.append_switch(Some(&"disable-gpu".into()));
+                command_line.append_switch(Some(&"disable-gpu-compositing".into()));
+            }
         }
     }
 }
 
 impl AppBuilder {
-    fn build() -> App {
-        Self::new(BrowserApp)
+    fn build(accelerated: bool) -> App {
+        let override_value = std::env::var("ZIKZAK_CEF_OZONE_PLATFORM").ok();
+        let session_type = std::env::var("XDG_SESSION_TYPE").ok();
+        let ozone_platform = select_ozone_platform(
+            override_value.as_deref(),
+            session_type.as_deref(),
+            std::env::var_os("WAYLAND_DISPLAY").is_some(),
+        );
+        Self::new(BrowserApp {
+            accelerated,
+            ozone_platform,
+        })
+    }
+}
+
+fn select_ozone_platform(
+    override_value: Option<&str>,
+    session_type: Option<&str>,
+    has_wayland_display: bool,
+) -> String {
+    if let Some(value @ ("x11" | "wayland")) = override_value {
+        return value.to_owned();
+    }
+    if session_type == Some("wayland") && has_wayland_display {
+        "wayland".to_owned()
+    } else {
+        "x11".to_owned()
     }
 }
 
@@ -235,7 +415,9 @@ struct CefRuntime {
     _app: App,
     browser: Browser,
     latest_frame: Arc<Mutex<LatestFrame>>,
+    accelerated_paint: Arc<Mutex<AcceleratedPaintSnapshot>>,
     surface: Arc<Mutex<SurfaceMetrics>>,
+    accelerated: bool,
 }
 
 thread_local! {
@@ -266,6 +448,19 @@ pub extern "C" fn zikzak_cef_initialize(
     runtime_directory: *const c_char,
     initial_url: *const c_char,
 ) -> i32 {
+    zikzak_cef_initialize_with_options(runtime_directory, initial_url, 0)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn zikzak_cef_initialize_with_options(
+    runtime_directory: *const c_char,
+    initial_url: *const c_char,
+    transport: u32,
+) -> i32 {
+    if transport > 1 {
+        return -7;
+    }
+    let accelerated = transport == 1;
     let runtime_directory = match required_c_string(runtime_directory) {
         Ok(value) => PathBuf::from(value),
         Err(status) => return status,
@@ -278,6 +473,7 @@ pub extern "C" fn zikzak_cef_initialize(
     if RUNTIME.with_borrow(|runtime| runtime.is_some()) {
         return 1;
     }
+    DMA_BUF_GENERATION.store(0, Ordering::Release);
 
     let helper_path = runtime_directory.join("zikzak_cef_helper");
     let locales_path = runtime_directory.join("locales");
@@ -288,7 +484,7 @@ pub extern "C" fn zikzak_cef_initialize(
 
     let _ = cef::api_hash(cef::sys::CEF_API_VERSION_LAST, 0);
     let args = Args::new();
-    let mut app = AppBuilder::build();
+    let mut app = AppBuilder::build(accelerated);
     let process_result = cef::execute_process(
         Some(args.as_main_args()),
         Some(&mut app),
@@ -323,11 +519,12 @@ pub extern "C" fn zikzak_cef_initialize(
     }
 
     let latest_frame = Arc::new(Mutex::new(LatestFrame::default()));
+    let accelerated_paint = Arc::new(Mutex::new(AcceleratedPaintSnapshot::default()));
     let surface = Arc::new(Mutex::new(SurfaceMetrics::default()));
     let window_info = cef::WindowInfo {
         windowless_rendering_enabled: true as _,
-        shared_texture_enabled: false as _,
-        external_begin_frame_enabled: false as _,
+        shared_texture_enabled: accelerated as _,
+        external_begin_frame_enabled: accelerated as _,
         runtime_style: RuntimeStyle::ALLOY,
         ..Default::default()
     };
@@ -337,8 +534,9 @@ pub extern "C" fn zikzak_cef_initialize(
     };
     let browser = cef::browser_host_create_browser_sync(
         Some(&window_info),
-        Some(&mut ClientBuilder::build(CpuRenderHandler {
+        Some(&mut ClientBuilder::build(BrowserRenderHandler {
             latest_frame: latest_frame.clone(),
+            accelerated_paint: accelerated_paint.clone(),
             surface: surface.clone(),
         })),
         Some(&initial_url.as_str().into()),
@@ -356,7 +554,9 @@ pub extern "C" fn zikzak_cef_initialize(
             _app: app,
             browser,
             latest_frame,
+            accelerated_paint,
             surface,
+            accelerated,
         });
     });
     0
@@ -368,7 +568,113 @@ pub extern "C" fn zikzak_cef_pump() -> i32 {
         return -1;
     }
     cef::do_message_loop_work();
+    RUNTIME.with_borrow(|runtime| {
+        if let Some(runtime) = runtime.as_ref()
+            && runtime.accelerated
+            && let Some(host) = runtime.browser.host()
+        {
+            host.send_external_begin_frame();
+        }
+    });
     0
+}
+
+fn accelerated_stat<T: Default>(read: impl FnOnce(&AcceleratedPaintSnapshot) -> T) -> T {
+    RUNTIME.with_borrow(|runtime| {
+        runtime
+            .as_ref()
+            .and_then(|runtime| runtime.accelerated_paint.lock().ok())
+            .map_or_else(T::default, |snapshot| read(&snapshot))
+    })
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn zikzak_cef_accelerated_paint_count() -> u64 {
+    accelerated_stat(|snapshot| snapshot.paint_count)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn zikzak_cef_accelerated_valid_paint_count() -> u64 {
+    accelerated_stat(|snapshot| snapshot.valid_paint_count)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn zikzak_cef_accelerated_plane_count() -> u32 {
+    accelerated_stat(|snapshot| snapshot.plane_count)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn zikzak_cef_accelerated_format() -> u32 {
+    accelerated_stat(|snapshot| snapshot.format)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn zikzak_cef_accelerated_modifier() -> u64 {
+    accelerated_stat(|snapshot| snapshot.modifier)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn zikzak_cef_accelerated_coded_width() -> i32 {
+    accelerated_stat(|snapshot| snapshot.coded_width)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn zikzak_cef_accelerated_coded_height() -> i32 {
+    accelerated_stat(|snapshot| snapshot.coded_height)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn zikzak_cef_accelerated_visible_width() -> i32 {
+    accelerated_stat(|snapshot| snapshot.visible_width)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn zikzak_cef_accelerated_visible_height() -> i32 {
+    accelerated_stat(|snapshot| snapshot.visible_height)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn zikzak_cef_accelerated_first_plane_stride() -> u32 {
+    accelerated_stat(|snapshot| snapshot.first_plane_stride)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn zikzak_cef_dma_buf_copy_attach(
+    callback: Option<DmaBufCopyCallback>,
+    user_data: *mut c_void,
+) -> i32 {
+    let Some(callback) = callback else {
+        return -1;
+    };
+    if user_data.is_null() {
+        return -1;
+    }
+    let Ok(mut target) = DMA_BUF_COPY_TARGET.lock() else {
+        return -2;
+    };
+    *target = Some(DmaBufCopyTarget {
+        callback,
+        user_data: user_data as usize,
+    });
+    0
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn zikzak_cef_dma_buf_copy_detach(user_data: *mut c_void) {
+    let Ok(mut target) = DMA_BUF_COPY_TARGET.lock() else {
+        return;
+    };
+    if target
+        .as_ref()
+        .is_some_and(|target| target.user_data == user_data as usize)
+    {
+        *target = None;
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn zikzak_cef_dma_buf_generation() -> u64 {
+    DMA_BUF_GENERATION.load(Ordering::Acquire)
 }
 
 #[unsafe(no_mangle)]
@@ -518,6 +824,17 @@ pub extern "C" fn zikzak_cef_set_focus(focused: i32) -> i32 {
     })
 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn zikzak_cef_set_visibility(visible: i32) -> i32 {
+    RUNTIME.with_borrow(|runtime| {
+        let Some(host) = runtime.as_ref().and_then(|runtime| runtime.browser.host()) else {
+            return -3;
+        };
+        host.was_hidden((visible == 0) as i32);
+        0
+    })
+}
+
 fn mouse_event(x: i32, y: i32, modifiers: u32) -> MouseEvent {
     MouseEvent { x, y, modifiers }
 }
@@ -632,7 +949,26 @@ pub extern "C" fn zikzak_cef_send_key(
 
 #[cfg(test)]
 mod tests {
-    use super::checked_frame_byte_length;
+    use super::*;
+
+    fn valid_accelerated_paint_info() -> AcceleratedPaintInfo {
+        let mut info = AcceleratedPaintInfo::default();
+        info.plane_count = 1;
+        info.planes[0].fd = 7;
+        info.planes[0].stride = 2_560;
+        info.planes[0].size = 1_228_800;
+        info.extra.coded_size = Size {
+            width: 640,
+            height: 480,
+        };
+        info.extra.visible_rect = Rect {
+            x: 0,
+            y: 0,
+            width: 640,
+            height: 480,
+        };
+        info
+    }
 
     #[test]
     fn computes_dynamic_frame_byte_length() {
@@ -648,5 +984,44 @@ mod tests {
     #[test]
     fn rejects_frames_above_the_memory_limit() {
         assert_eq!(checked_frame_byte_length(32_768, 32_768), None);
+    }
+
+    #[test]
+    fn accepts_complete_accelerated_paint_metadata() {
+        assert!(accelerated_paint_info_is_valid(
+            &valid_accelerated_paint_info()
+        ));
+    }
+
+    #[test]
+    fn rejects_incomplete_accelerated_paint_metadata() {
+        let mut info = valid_accelerated_paint_info();
+        info.plane_count = 0;
+        assert!(!accelerated_paint_info_is_valid(&info));
+
+        info = valid_accelerated_paint_info();
+        info.planes[0].size = 0;
+        assert!(!accelerated_paint_info_is_valid(&info));
+
+        info = valid_accelerated_paint_info();
+        info.extra.visible_rect.width = 0;
+        assert!(!accelerated_paint_info_is_valid(&info));
+    }
+
+    #[test]
+    fn ozone_platform_prefers_valid_override_then_active_session() {
+        assert_eq!(
+            select_ozone_platform(Some("x11"), Some("wayland"), true),
+            "x11"
+        );
+        assert_eq!(
+            select_ozone_platform(None, Some("wayland"), true),
+            "wayland"
+        );
+        assert_eq!(select_ozone_platform(None, Some("wayland"), false), "x11");
+        assert_eq!(
+            select_ozone_platform(Some("invalid"), Some("x11"), true),
+            "x11"
+        );
     }
 }

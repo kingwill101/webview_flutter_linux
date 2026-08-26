@@ -14,6 +14,47 @@ external int zikzakFrameHeight();
 @ffi.Native<ffi.Size Function()>(symbol: 'zikzak_frame_byte_length')
 external int zikzakFrameByteLength();
 
+@ffi.Native<ffi.Int64 Function()>(symbol: 'zikzak_flutter_texture_id')
+external int zikzakFlutterTextureId();
+
+@ffi.Native<ffi.Int32 Function(ffi.Uint32, ffi.Uint32)>(
+  symbol: 'zikzak_flutter_texture_resize',
+)
+external int zikzakFlutterTextureResize(int width, int height);
+
+@ffi.Native<ffi.Uint32 Function()>(symbol: 'zikzak_flutter_texture_width')
+external int zikzakFlutterTextureWidth();
+
+@ffi.Native<ffi.Uint32 Function()>(symbol: 'zikzak_flutter_texture_height')
+external int zikzakFlutterTextureHeight();
+
+@ffi.Native<ffi.Uint64 Function()>(symbol: 'zikzak_flutter_texture_generation')
+external int zikzakFlutterTextureGeneration();
+
+@ffi.Native<ffi.Int32 Function()>(
+  symbol: 'zikzak_flutter_texture_request_frame',
+)
+external int zikzakFlutterTextureRequestFrame();
+
+@ffi.Native<ffi.Uint32 Function()>(symbol: 'zikzak_flutter_texture_gl_name')
+external int zikzakFlutterTextureGlName();
+
+@ffi.Native<ffi.Size Function()>(symbol: 'zikzak_flutter_texture_egl_display')
+external int zikzakFlutterTextureEglDisplay();
+
+@ffi.Native<ffi.Size Function()>(symbol: 'zikzak_flutter_texture_egl_context')
+external int zikzakFlutterTextureEglContext();
+
+@ffi.Native<ffi.Uint64 Function()>(
+  symbol: 'zikzak_flutter_texture_dma_buf_generation',
+)
+external int zikzakFlutterTextureDmaBufGeneration();
+
+@ffi.Native<ffi.Int32 Function()>(
+  symbol: 'zikzak_flutter_texture_dma_buf_status',
+)
+external int zikzakFlutterTextureDmaBufStatus();
+
 @ffi.Native<ffi.Int32 Function(ffi.Pointer<ffi.Uint8>, ffi.Size, ffi.Uint64)>(
   symbol: 'zikzak_render_test_frame',
 )
@@ -31,8 +72,58 @@ external int zikzakCefInitialize(
   ffi.Pointer<ffi.Char> initialUrl,
 );
 
+@ffi.Native<
+  ffi.Int32 Function(ffi.Pointer<ffi.Char>, ffi.Pointer<ffi.Char>, ffi.Uint32)
+>(symbol: 'zikzak_cef_initialize_with_options')
+external int zikzakCefInitializeWithOptions(
+  ffi.Pointer<ffi.Char> runtimeDirectory,
+  ffi.Pointer<ffi.Char> initialUrl,
+  int transport,
+);
+
 @ffi.Native<ffi.Int32 Function()>(symbol: 'zikzak_cef_pump')
 external int zikzakCefPump();
+
+@ffi.Native<ffi.Uint64 Function()>(symbol: 'zikzak_cef_accelerated_paint_count')
+external int zikzakCefAcceleratedPaintCount();
+
+@ffi.Native<ffi.Uint64 Function()>(
+  symbol: 'zikzak_cef_accelerated_valid_paint_count',
+)
+external int zikzakCefAcceleratedValidPaintCount();
+
+@ffi.Native<ffi.Uint32 Function()>(symbol: 'zikzak_cef_accelerated_plane_count')
+external int zikzakCefAcceleratedPlaneCount();
+
+@ffi.Native<ffi.Uint32 Function()>(symbol: 'zikzak_cef_accelerated_format')
+external int zikzakCefAcceleratedFormat();
+
+@ffi.Native<ffi.Uint64 Function()>(symbol: 'zikzak_cef_accelerated_modifier')
+external int zikzakCefAcceleratedModifier();
+
+@ffi.Native<ffi.Int32 Function()>(symbol: 'zikzak_cef_accelerated_coded_width')
+external int zikzakCefAcceleratedCodedWidth();
+
+@ffi.Native<ffi.Int32 Function()>(symbol: 'zikzak_cef_accelerated_coded_height')
+external int zikzakCefAcceleratedCodedHeight();
+
+@ffi.Native<ffi.Int32 Function()>(
+  symbol: 'zikzak_cef_accelerated_visible_width',
+)
+external int zikzakCefAcceleratedVisibleWidth();
+
+@ffi.Native<ffi.Int32 Function()>(
+  symbol: 'zikzak_cef_accelerated_visible_height',
+)
+external int zikzakCefAcceleratedVisibleHeight();
+
+@ffi.Native<ffi.Uint32 Function()>(
+  symbol: 'zikzak_cef_accelerated_first_plane_stride',
+)
+external int zikzakCefAcceleratedFirstPlaneStride();
+
+@ffi.Native<ffi.Uint64 Function()>(symbol: 'zikzak_cef_dma_buf_generation')
+external int zikzakCefDmaBufGeneration();
 
 @ffi.Native<ffi.Uint64 Function()>(symbol: 'zikzak_cef_frame_generation')
 external int zikzakCefFrameGeneration();
@@ -70,6 +161,9 @@ external int zikzakCefResize(
 
 @ffi.Native<ffi.Int32 Function(ffi.Int32)>(symbol: 'zikzak_cef_set_focus')
 external int zikzakCefSetFocus(int focused);
+
+@ffi.Native<ffi.Int32 Function(ffi.Int32)>(symbol: 'zikzak_cef_set_visibility')
+external int zikzakCefSetVisibility(int visible);
 
 @ffi.Native<ffi.Int32 Function(ffi.Int32, ffi.Int32, ffi.Uint32, ffi.Int32)>(
   symbol: 'zikzak_cef_send_mouse_move',

@@ -14,7 +14,11 @@ final class NativeFrameRenderer {
   NativeFrameRenderer({
     bool enableCef = true,
     String initialUrl = 'https://example.com',
-  }) : apiVersion = zikzakApiVersion(),
+    bool? acceleratedProbe,
+  }) : acceleratedProbe =
+           acceleratedProbe ??
+           Platform.environment['ZIKZAK_CEF_ACCELERATED_PROBE'] == '1',
+       apiVersion = zikzakApiVersion(),
        _width = zikzakFrameWidth(),
        _height = zikzakFrameHeight(),
        _byteLength = zikzakFrameByteLength() {
@@ -34,6 +38,7 @@ final class NativeFrameRenderer {
       );
       final reusedRuntime = _initializeCef(runtimeDirectory.path, initialUrl);
       cefEnabled = true;
+      setVisibility(true);
       if (reusedRuntime) {
         navigate(initialUrl);
       }
@@ -41,6 +46,7 @@ final class NativeFrameRenderer {
   }
 
   final int apiVersion;
+  final bool acceleratedProbe;
   int _width;
   int _height;
   int _byteLength;
@@ -53,11 +59,35 @@ final class NativeFrameRenderer {
   bool cefEnabled = false;
   bool cefFrameReady = false;
   int cefFrameGeneration = 0;
+  bool _proceduralFrameRendered = false;
+  int _requestedTextureGeneration = -1;
+  int _requestedAcceleratedPaintCount = -1;
   bool _disposed = false;
 
   int get width => _width;
   int get height => _height;
   int get byteLength => _byteLength;
+  int get textureId => zikzakFlutterTextureId();
+  int get textureWidth => zikzakFlutterTextureWidth();
+  int get textureHeight => zikzakFlutterTextureHeight();
+  int get textureGeneration => zikzakFlutterTextureGeneration();
+  int get textureGlName => zikzakFlutterTextureGlName();
+  bool get textureGlContextReady =>
+      zikzakFlutterTextureEglDisplay() != 0 &&
+      zikzakFlutterTextureEglContext() != 0;
+  int get textureDmaBufGeneration => zikzakFlutterTextureDmaBufGeneration();
+  int get textureDmaBufStatus => zikzakFlutterTextureDmaBufStatus();
+  int get acceleratedPaintCount => zikzakCefAcceleratedPaintCount();
+  int get acceleratedValidPaintCount => zikzakCefAcceleratedValidPaintCount();
+  int get acceleratedPlaneCount => zikzakCefAcceleratedPlaneCount();
+  int get acceleratedFormat => zikzakCefAcceleratedFormat();
+  int get acceleratedModifier => zikzakCefAcceleratedModifier();
+  int get acceleratedCodedWidth => zikzakCefAcceleratedCodedWidth();
+  int get acceleratedCodedHeight => zikzakCefAcceleratedCodedHeight();
+  int get acceleratedVisibleWidth => zikzakCefAcceleratedVisibleWidth();
+  int get acceleratedVisibleHeight => zikzakCefAcceleratedVisibleHeight();
+  int get acceleratedFirstPlaneStride => zikzakCefAcceleratedFirstPlaneStride();
+  int get dmaBufCallbackGeneration => zikzakCefDmaBufGeneration();
 
   Future<ui.Image?> render(int frameNumber) {
     if (_disposed) {
@@ -68,6 +98,9 @@ final class NativeFrameRenderer {
       final pumpStatus = zikzakCefPump();
       if (pumpStatus != 0) {
         throw StateError('CEF message pump failed with status $pumpStatus.');
+      }
+      if (acceleratedProbe) {
+        _requestTextureFrameIfNeeded();
       }
       final generation = zikzakCefFrameGeneration();
       if (generation > cefFrameGeneration) {
@@ -98,6 +131,9 @@ final class NativeFrameRenderer {
     }
 
     if (!cefFrameReady) {
+      if (acceleratedProbe && _proceduralFrameRendered) {
+        return Future.value(null);
+      }
       final result = zikzakRenderTestFrame(
         _destination,
         _byteLength,
@@ -106,6 +142,7 @@ final class NativeFrameRenderer {
       if (result != 0) {
         throw StateError('Rust frame renderer failed with status $result.');
       }
+      _proceduralFrameRendered = true;
     }
 
     final image = Completer<ui.Image>();
@@ -153,10 +190,45 @@ final class NativeFrameRenderer {
     _logicalWidth = width;
     _logicalHeight = height;
     _deviceScaleFactor = scale;
+    if (acceleratedProbe) {
+      final physicalWidth = (width * scale).ceil().clamp(1, 16384);
+      final physicalHeight = (height * scale).ceil().clamp(1, 16384);
+      final textureStatus = zikzakFlutterTextureResize(
+        physicalWidth,
+        physicalHeight,
+      );
+      if (textureStatus != 0) {
+        throw StateError(
+          'Flutter GL texture resize failed with status $textureStatus.',
+        );
+      }
+    }
+  }
+
+  void _requestTextureFrameIfNeeded() {
+    if (textureId <= 0) return;
+    final generation = textureGeneration;
+    final paintCount = acceleratedPaintCount;
+    if (generation == _requestedTextureGeneration &&
+        paintCount == _requestedAcceleratedPaintCount) {
+      return;
+    }
+    final status = zikzakFlutterTextureRequestFrame();
+    if (status != 0) {
+      throw StateError(
+        'Flutter GL texture frame request failed with status $status.',
+      );
+    }
+    _requestedTextureGeneration = generation;
+    _requestedAcceleratedPaintCount = paintCount;
   }
 
   void setFocus(bool focused) {
     _checkInputStatus('focus', zikzakCefSetFocus(focused ? 1 : 0));
+  }
+
+  void setVisibility(bool visible) {
+    _checkInputStatus('visibility', zikzakCefSetVisibility(visible ? 1 : 0));
   }
 
   void sendMouseMove({
@@ -252,9 +324,10 @@ final class NativeFrameRenderer {
     final nativeRuntimeDirectory = runtimeDirectory.toNativeUtf8();
     final nativeInitialUrl = initialUrl.toNativeUtf8();
     try {
-      final status = zikzakCefInitialize(
+      final status = zikzakCefInitializeWithOptions(
         nativeRuntimeDirectory.cast(),
         nativeInitialUrl.cast(),
+        acceleratedProbe ? 1 : 0,
       );
       if (status != 0 && status != 1) {
         throw StateError(

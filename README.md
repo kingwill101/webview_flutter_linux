@@ -36,6 +36,11 @@ click, wheel, focus, and direct keyboard events are forwarded through the C
 ABI in CEF view coordinates. `marionette_flutter` is enabled only in ordinary
 debug runs; tests and release builds retain the standard Flutter binding.
 
+An opt-in accelerated mode enables CEF shared textures, imports each
+callback-scoped DMA-BUF through EGL, and GPU-copies it into an
+application-owned Flutter Linux texture before the callback returns. The
+procedural Rust frame remains visible only until the first successful copy.
+
 ## One-time CEF setup
 
 CEF is much larger than one shared library. Install the pinned minimal Linux
@@ -61,6 +66,18 @@ CEF_PATH="$PWD/third_party/cef" \
 flutter build linux --debug
 flutter run -d linux
 ```
+
+Run the accelerated callback probe with:
+
+```sh
+ZIKZAK_CEF_ACCELERATED_PROBE=1 flutter run -d linux
+```
+
+The probe selects Ozone Wayland when running in a Wayland session and otherwise
+uses X11. Override it for driver comparisons with
+`ZIKZAK_CEF_OZONE_PLATFORM=x11` or `ZIKZAK_CEF_OZONE_PLATFORM=wayland`. The
+surface reports paint validity, coded size, plane count, CEF pixel format, DRM
+modifier, first-plane stride, Flutter GL texture identity, and import status.
 
 For Marionette inspection, copy the VM-service WebSocket URI from `flutter run`
 and use:
@@ -93,9 +110,12 @@ lifecycle/shutdown are still missing. The browser cache currently lives in a
 per-process directory under the system temporary directory, and CEF runs with
 its sandbox disabled for this experiment.
 
-The next rendering milestone is Linux accelerated OSR. CEF's
-`OnAcceleratedPaint` supplies callback-lifetime DMA-BUF resources; those must be
-GPU-copied into application-owned images before the callback returns, then
-published through a Flutter Linux external texture. It should not reuse or hold
-CEF's borrowed handles after the callback. See the phased ownership and
-verification contract in [`docs/ACCELERATED_OSR.md`](docs/ACCELERATED_OSR.md).
+The Linux accelerated path has received valid, resize-aware, single-plane
+BGRA8888 DMA-BUF descriptions and registered an application-owned
+`FlTextureGL`. A narrow C runner shim creates an EGL context shared with
+Flutter, and Rust invokes its FFI copy callback synchronously from
+`OnAcceleratedPaint`. The imported EGL image is destroyed before CEF's callback
+returns; only the application-owned texture survives. The remaining work is to
+validate synchronization and frame pacing under sustained load. See the
+ownership and verification contract in
+[`docs/ACCELERATED_OSR.md`](docs/ACCELERATED_OSR.md).

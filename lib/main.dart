@@ -73,7 +73,7 @@ class ProbePage extends StatefulWidget {
   State<ProbePage> createState() => _ProbePageState();
 }
 
-class _ProbePageState extends State<ProbePage> {
+class _ProbePageState extends State<ProbePage> with WidgetsBindingObserver {
   final _addressController = TextEditingController(text: 'https://example.com');
   final _surfaceFocusNode = FocusNode(debugLabel: 'CEF browser surface');
   NativeFrameRenderer? _renderer;
@@ -82,6 +82,7 @@ class _ProbePageState extends State<ProbePage> {
   Object? _error;
   int _frameNumber = 0;
   int _framesRendered = 0;
+  int _lastAcceleratedPaintCount = 0;
   bool _frameInFlight = false;
   int _pressedButtons = 0;
   Offset _lastPointerPosition = Offset.zero;
@@ -92,18 +93,14 @@ class _ProbePageState extends State<ProbePage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     try {
       _renderer =
           widget.renderer ?? NativeFrameRenderer(enableCef: widget.enableCef);
       Timer.run(() {
         if (!mounted) return;
         _renderNextFrame();
-        if (widget.animate) {
-          _frameTimer = Timer.periodic(
-            const Duration(milliseconds: 33),
-            (_) => _renderNextFrame(),
-          );
-        }
+        _startFrameTimer();
       });
     } catch (error) {
       _error = error;
@@ -117,7 +114,13 @@ class _ProbePageState extends State<ProbePage> {
     _frameInFlight = true;
     try {
       final nextImage = await renderer.render(_frameNumber++);
-      if (nextImage == null) return;
+      final acceleratedPaintCount = renderer.acceleratedPaintCount;
+      if (nextImage == null) {
+        if (mounted && acceleratedPaintCount != _lastAcceleratedPaintCount) {
+          setState(() => _lastAcceleratedPaintCount = acceleratedPaintCount);
+        }
+        return;
+      }
       if (!mounted) {
         nextImage.dispose();
         return;
@@ -126,6 +129,7 @@ class _ProbePageState extends State<ProbePage> {
       setState(() {
         _image = nextImage;
         _framesRendered += 1;
+        _lastAcceleratedPaintCount = acceleratedPaintCount;
       });
       if (previousImage != null) {
         WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -133,7 +137,7 @@ class _ProbePageState extends State<ProbePage> {
         });
       }
     } catch (error) {
-      _frameTimer?.cancel();
+      _stopFrameTimer();
       if (mounted) {
         setState(() => _error = error);
       }
@@ -144,12 +148,40 @@ class _ProbePageState extends State<ProbePage> {
 
   @override
   void dispose() {
-    _frameTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
+    _stopFrameTimer();
     _addressController.dispose();
     _surfaceFocusNode.dispose();
     _image?.dispose();
     _renderer?.dispose();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    final visible =
+        state == AppLifecycleState.resumed ||
+        state == AppLifecycleState.inactive;
+    _runCefAction(() => _renderer?.setVisibility(visible));
+    if (!widget.animate) return;
+    if (visible) {
+      _startFrameTimer();
+    } else {
+      _stopFrameTimer();
+    }
+  }
+
+  void _startFrameTimer() {
+    if (!widget.animate || _frameTimer != null) return;
+    _frameTimer = Timer.periodic(
+      const Duration(milliseconds: 16),
+      (_) => _renderNextFrame(),
+    );
+  }
+
+  void _stopFrameTimer() {
+    _frameTimer?.cancel();
+    _frameTimer = null;
   }
 
   @override
@@ -185,9 +217,26 @@ class _ProbePageState extends State<ProbePage> {
                 if (renderer?.cefEnabled ?? false)
                   _StatusChip(
                     icon: Icons.language,
-                    label: renderer!.cefFrameReady
+                    label: renderer!.acceleratedProbe
+                        ? _acceleratedProbeLabel(renderer)
+                        : renderer.cefFrameReady
                         ? 'CEF CPU OSR · frame ${renderer.cefFrameGeneration}'
                         : 'CEF CPU OSR · waiting for first paint',
+                  ),
+                if ((renderer?.acceleratedProbe ?? false) &&
+                    renderer!.acceleratedPaintCount > 0)
+                  _StatusChip(
+                    icon: Icons.data_object,
+                    label: _acceleratedMetadataLabel(renderer),
+                  ),
+                if ((renderer?.acceleratedProbe ?? false) &&
+                    renderer!.textureId > 0)
+                  _StatusChip(
+                    icon: Icons.texture,
+                    label:
+                        'FlTextureGL · id ${renderer.textureId} · '
+                        'name ${renderer.textureGlName} · '
+                        '${_textureTransportLabel(renderer)}',
                   ),
                 _StatusChip(
                   icon: Icons.movie_filter_outlined,
@@ -242,10 +291,15 @@ class _ProbePageState extends State<ProbePage> {
             ),
             const SizedBox(height: 14),
             Text(
-              'This frame is generated in Rust, written directly into '
-              'FFI memory owned by Dart, and uploaded as a Flutter image. '
-              'The procedural frame remains visible only until CEF delivers '
-              'its first off-screen paint callback.',
+              renderer?.acceleratedProbe ?? false
+                  ? 'Accelerated probe mode displays an application-owned '
+                        'FlTextureGL surface. Valid CEF DMA-BUF frames are '
+                        'imported through EGL and copied into the Flutter-owned '
+                        'texture without a CPU pixel readback.'
+                  : 'This frame is generated in Rust, written directly into '
+                        'FFI memory owned by Dart, and uploaded as a Flutter '
+                        'image. The procedural frame remains visible only '
+                        'until CEF delivers its first off-screen paint callback.',
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                 color: Theme.of(context).colorScheme.onSurfaceVariant,
               ),
@@ -254,6 +308,36 @@ class _ProbePageState extends State<ProbePage> {
         ),
       ),
     );
+  }
+
+  String _acceleratedProbeLabel(NativeFrameRenderer renderer) {
+    final paints = renderer.acceleratedPaintCount;
+    if (paints == 0) return 'CEF DMA-BUF probe · waiting';
+    final valid = renderer.acceleratedValidPaintCount;
+    return 'CEF DMA-BUF · $valid/$paints valid · '
+        '${renderer.acceleratedCodedWidth}×${renderer.acceleratedCodedHeight} · '
+        '${renderer.acceleratedPlaneCount} plane(s)';
+  }
+
+  String _acceleratedMetadataLabel(NativeFrameRenderer renderer) {
+    final format = switch (renderer.acceleratedFormat) {
+      0 => 'RGBA8888',
+      1 => 'BGRA8888',
+      final value => 'format $value',
+    };
+    return '$format · mod '
+        '0x${renderer.acceleratedModifier.toRadixString(16)} · '
+        '${renderer.acceleratedFirstPlaneStride} B/row';
+  }
+
+  String _textureTransportLabel(NativeFrameRenderer renderer) {
+    final generation = renderer.textureDmaBufGeneration;
+    final status = renderer.textureDmaBufStatus;
+    if (generation == 0) {
+      return 'test frame · callback ${renderer.dmaBufCallbackGeneration}';
+    }
+    if (status == 0) return 'DMA-BUF frame $generation';
+    return 'DMA-BUF error $status';
   }
 
   void _navigate() {
@@ -304,7 +388,14 @@ class _ProbePageState extends State<ProbePage> {
               onPointerMove: _handlePointerMove,
               onPointerHover: _handlePointerMove,
               onPointerSignal: _handlePointerSignal,
-              child: _image != null
+              child:
+                  (_renderer?.acceleratedProbe ?? false) &&
+                      (_renderer?.textureId ?? 0) > 0
+                  ? Texture(
+                      textureId: _renderer!.textureId,
+                      filterQuality: FilterQuality.none,
+                    )
+                  : _image != null
                   ? RawImage(
                       image: _image,
                       fit: BoxFit.fill,
@@ -511,7 +602,7 @@ class _ProbePageState extends State<ProbePage> {
     try {
       action();
     } catch (error) {
-      _frameTimer?.cancel();
+      _stopFrameTimer();
       if (mounted) setState(() => _error = error);
     }
   }

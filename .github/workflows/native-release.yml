@@ -53,6 +53,7 @@ jobs:
       - name: Validate release inputs
         shell: bash
         run: |
+          git config --global --add safe.directory "$FLUTTER_ROOT"
           configured_tag="$(sed -n 's/^  tag: //p' "$CONFIG")"
           if [[ "$RELEASE_TAG" != "$configured_tag" ]]; then
             echo "Requested tag '$RELEASE_TAG' does not match '$configured_tag'."

@@ -5,7 +5,10 @@
 use std::{
     ffi::{c_char, c_void},
     ptr,
-    sync::{Arc, Mutex, OnceLock},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicI64, AtomicU32, AtomicU64, AtomicUsize, Ordering},
+    },
     time::Instant,
 };
 
@@ -13,15 +16,7 @@ use irondash_texture::{
     BoxedGLTexture, GLTexture, GLTextureProvider, PayloadProvider, SendableTexture, Texture,
 };
 
-use crate::{
-    FLUTTER_TEXTURE_DMA_BUF_COPY_COUNT, FLUTTER_TEXTURE_DMA_BUF_FENCE_FALLBACK_COUNT,
-    FLUTTER_TEXTURE_DMA_BUF_GENERATION, FLUTTER_TEXTURE_DMA_BUF_LAST_COPY_MICROS,
-    FLUTTER_TEXTURE_DMA_BUF_MAX_COPY_MICROS, FLUTTER_TEXTURE_DMA_BUF_STATUS,
-    FLUTTER_TEXTURE_EGL_CONTEXT, FLUTTER_TEXTURE_EGL_DISPLAY, FLUTTER_TEXTURE_GENERATION,
-    FLUTTER_TEXTURE_GL_NAME, FLUTTER_TEXTURE_HEIGHT, FLUTTER_TEXTURE_ID, FLUTTER_TEXTURE_WIDTH,
-    checked_dynamic_frame_byte_length, render_flutter_texture_test_frame,
-};
-use std::sync::atomic::Ordering;
+use crate::{HEIGHT, WIDTH, checked_dynamic_frame_byte_length, render_flutter_texture_test_frame};
 
 type EglDisplay = *mut c_void;
 type EglContext = *mut c_void;
@@ -116,6 +111,42 @@ const EGL_DMA_BUF_PLANE_MODIFIER_HI_ATTRIBUTES: [i32; 4] = [
 ];
 const COPY_FENCE_TIMEOUT_NS: u64 = 16_000_000;
 const TEXTURE_SLOT_COUNT: usize = 3;
+
+pub(crate) struct TextureMetrics {
+    id: AtomicI64,
+    width: AtomicU32,
+    height: AtomicU32,
+    generation: AtomicU64,
+    gl_name: AtomicU32,
+    egl_display: AtomicUsize,
+    egl_context: AtomicUsize,
+    dma_buf_generation: AtomicU64,
+    dma_buf_status: AtomicI64,
+    dma_buf_copy_count: AtomicU64,
+    dma_buf_last_copy_micros: AtomicU64,
+    dma_buf_max_copy_micros: AtomicU64,
+    dma_buf_fence_fallback_count: AtomicU64,
+}
+
+impl Default for TextureMetrics {
+    fn default() -> Self {
+        Self {
+            id: AtomicI64::new(0),
+            width: AtomicU32::new(WIDTH as u32),
+            height: AtomicU32::new(HEIGHT as u32),
+            generation: AtomicU64::new(1),
+            gl_name: AtomicU32::new(0),
+            egl_display: AtomicUsize::new(0),
+            egl_context: AtomicUsize::new(0),
+            dma_buf_generation: AtomicU64::new(0),
+            dma_buf_status: AtomicI64::new(0),
+            dma_buf_copy_count: AtomicU64::new(0),
+            dma_buf_last_copy_micros: AtomicU64::new(0),
+            dma_buf_max_copy_micros: AtomicU64::new(0),
+            dma_buf_fence_fallback_count: AtomicU64::new(0),
+        }
+    }
+}
 
 const fn fourcc(a: u8, b: u8, c: u8, d: u8) -> u32 {
     a as u32 | (b as u32) << 8 | (c as u32) << 16 | (d as u32) << 24
@@ -314,10 +345,10 @@ impl GlState {
         true
     }
 
-    unsafe fn populate(&mut self) -> Result<TextureSnapshot, i32> {
-        let width = FLUTTER_TEXTURE_WIDTH.load(Ordering::Acquire);
-        let height = FLUTTER_TEXTURE_HEIGHT.load(Ordering::Acquire);
-        let generation = FLUTTER_TEXTURE_GENERATION.load(Ordering::Acquire);
+    unsafe fn populate(&mut self, metrics: &TextureMetrics) -> Result<TextureSnapshot, i32> {
+        let width = metrics.width.load(Ordering::Acquire);
+        let height = metrics.height.load(Ordering::Acquire);
+        let generation = metrics.generation.load(Ordering::Acquire);
         let byte_length = checked_dynamic_frame_byte_length(width, height).ok_or(-40)?;
 
         if self.names[0] == 0 {
@@ -396,9 +427,9 @@ impl GlState {
 
         let display = unsafe { eglGetCurrentDisplay() } as usize;
         let context = unsafe { eglGetCurrentContext() } as usize;
-        FLUTTER_TEXTURE_GL_NAME.store(name, Ordering::Release);
-        FLUTTER_TEXTURE_EGL_DISPLAY.store(display, Ordering::Release);
-        FLUTTER_TEXTURE_EGL_CONTEXT.store(context, Ordering::Release);
+        metrics.gl_name.store(name, Ordering::Release);
+        metrics.egl_display.store(display, Ordering::Release);
+        metrics.egl_context.store(context, Ordering::Release);
         Ok(TextureSnapshot {
             name,
             width: width as i32,
@@ -427,12 +458,14 @@ impl Drop for GlState {
 
 struct TextureProvider {
     state: Mutex<GlState>,
+    metrics: Arc<TextureMetrics>,
 }
 
 impl TextureProvider {
-    fn new() -> Self {
+    fn new(metrics: Arc<TextureMetrics>) -> Self {
         Self {
             state: Mutex::new(GlState::default()),
+            metrics,
         }
     }
 }
@@ -457,203 +490,257 @@ impl GLTextureProvider for TextureSnapshot {
 impl PayloadProvider<BoxedGLTexture> for TextureProvider {
     fn get_payload(&self) -> BoxedGLTexture {
         let fallback = TextureSnapshot {
-            name: FLUTTER_TEXTURE_GL_NAME.load(Ordering::Acquire),
-            width: FLUTTER_TEXTURE_WIDTH.load(Ordering::Acquire) as i32,
-            height: FLUTTER_TEXTURE_HEIGHT.load(Ordering::Acquire) as i32,
+            name: self.metrics.gl_name.load(Ordering::Acquire),
+            width: self.metrics.width.load(Ordering::Acquire) as i32,
+            height: self.metrics.height.load(Ordering::Acquire) as i32,
         };
         let Ok(mut state) = self.state.lock() else {
             return Box::new(fallback);
         };
         // SAFETY: Irondash invokes this provider on Flutter's raster thread
         // while its GL context is current.
-        Box::new(unsafe { state.populate() }.unwrap_or(fallback))
+        Box::new(unsafe { state.populate(&self.metrics) }.unwrap_or(fallback))
     }
 }
 
-static PROVIDER: OnceLock<Arc<TextureProvider>> = OnceLock::new();
-static TEXTURE: Mutex<Option<Arc<SendableTexture<BoxedGLTexture>>>> = Mutex::new(None);
-
-pub(crate) fn initialize(engine_handle: i64) -> i32 {
-    let Ok(mut current) = TEXTURE.lock() else {
-        return -2;
-    };
-    if current.is_some() {
-        return 1;
-    }
-    let provider = PROVIDER
-        .get_or_init(|| Arc::new(TextureProvider::new()))
-        .clone();
-    let texture = match Texture::new_with_provider(engine_handle, provider) {
-        Ok(texture) => texture,
-        Err(_) => return -3,
-    };
-    let id = texture.id();
-    if id <= 0 {
-        return -4;
-    }
-    let texture = texture.into_sendable_texture();
-    FLUTTER_TEXTURE_ID.store(id, Ordering::Release);
-    FLUTTER_TEXTURE_DMA_BUF_GENERATION.store(0, Ordering::Release);
-    FLUTTER_TEXTURE_DMA_BUF_STATUS.store(0, Ordering::Release);
-    FLUTTER_TEXTURE_DMA_BUF_COPY_COUNT.store(0, Ordering::Release);
-    FLUTTER_TEXTURE_DMA_BUF_LAST_COPY_MICROS.store(0, Ordering::Release);
-    FLUTTER_TEXTURE_DMA_BUF_MAX_COPY_MICROS.store(0, Ordering::Release);
-    FLUTTER_TEXTURE_DMA_BUF_FENCE_FALLBACK_COUNT.store(0, Ordering::Release);
-    texture.mark_frame_available();
-    *current = Some(texture);
-    0
+pub(crate) struct TextureState {
+    metrics: Arc<TextureMetrics>,
+    provider: Arc<TextureProvider>,
+    texture: Mutex<Option<Arc<SendableTexture<BoxedGLTexture>>>>,
 }
 
-pub(crate) fn shutdown() -> i32 {
-    let Ok(mut texture) = TEXTURE.lock() else {
-        return -2;
-    };
-    texture.take();
-    FLUTTER_TEXTURE_ID.store(0, Ordering::Release);
-    FLUTTER_TEXTURE_GL_NAME.store(0, Ordering::Release);
-    FLUTTER_TEXTURE_EGL_DISPLAY.store(0, Ordering::Release);
-    FLUTTER_TEXTURE_EGL_CONTEXT.store(0, Ordering::Release);
-    if let Some(provider) = PROVIDER.get() {
-        let Ok(mut state) = provider.state.lock() else {
+impl TextureState {
+    pub(crate) fn new(engine_handle: i64) -> Result<Arc<Self>, i32> {
+        let metrics = Arc::new(TextureMetrics::default());
+        let provider = Arc::new(TextureProvider::new(metrics.clone()));
+        let texture =
+            Texture::new_with_provider(engine_handle, provider.clone()).map_err(|_| -3)?;
+        let id = texture.id();
+        if id <= 0 {
+            return Err(-4);
+        }
+        let texture = texture.into_sendable_texture();
+        metrics.id.store(id, Ordering::Release);
+        texture.mark_frame_available();
+        Ok(Arc::new(Self {
+            metrics,
+            provider,
+            texture: Mutex::new(Some(texture)),
+        }))
+    }
+
+    pub(crate) fn id(&self) -> i64 {
+        self.metrics.id.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn width(&self) -> u32 {
+        self.metrics.width.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn height(&self) -> u32 {
+        self.metrics.height.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn generation(&self) -> u64 {
+        self.metrics.generation.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn dma_buf_copy_count(&self) -> u64 {
+        self.metrics.dma_buf_copy_count.load(Ordering::Acquire)
+    }
+
+    pub(crate) fn resize(&self, width: u32, height: u32) -> i32 {
+        if checked_dynamic_frame_byte_length(width, height).is_none() {
+            return -1;
+        }
+        let old_width = self.metrics.width.swap(width, Ordering::AcqRel);
+        let old_height = self.metrics.height.swap(height, Ordering::AcqRel);
+        if old_width != width || old_height != height {
+            self.metrics.generation.fetch_add(1, Ordering::AcqRel);
+        }
+        0
+    }
+
+    pub(crate) fn shutdown(&self) -> i32 {
+        let Ok(mut texture) = self.texture.lock() else {
+            return -2;
+        };
+        texture.take();
+        self.metrics.id.store(0, Ordering::Release);
+        self.metrics.gl_name.store(0, Ordering::Release);
+        self.metrics.egl_display.store(0, Ordering::Release);
+        self.metrics.egl_context.store(0, Ordering::Release);
+        let Ok(mut state) = self.provider.state.lock() else {
             return -3;
         };
         *state = GlState::default();
-    }
-    0
-}
-
-pub(crate) fn mark_frame_available() -> i32 {
-    let texture = match TEXTURE.lock() {
-        Ok(texture) => texture.clone(),
-        Err(_) => return -2,
-    };
-    let Some(texture) = texture else {
-        return -1;
-    };
-    texture.mark_frame_available();
-    0
-}
-
-pub(crate) fn copy_dma_buf(frame: &DmaBufFrame) -> i32 {
-    let Some(provider) = PROVIDER.get() else {
-        publish_dma_buf_result(frame.generation, -30, 0, false);
-        return -30;
-    };
-    let Ok(mut state) = provider.state.lock() else {
-        publish_dma_buf_result(frame.generation, -2, 0, false);
-        return -2;
-    };
-    if state.copy_context == 0
-        || state.published_name() == 0
-        || state.allocated_width == 0
-        || state.allocated_height == 0
-    {
-        publish_dma_buf_result(frame.generation, -31, 0, false);
-        return -31;
+        0
     }
 
-    // SAFETY: The copy context is private to this state, shares Flutter's
-    // texture namespace, and is restored before returning to WPE.
-    let status = unsafe { copy_dma_buf_locked(&mut state, frame) };
-    status
-}
-
-unsafe fn copy_dma_buf_locked(state: &mut GlState, frame: &DmaBufFrame) -> i32 {
-    let previous_display = unsafe { eglGetCurrentDisplay() };
-    let previous_context = unsafe { eglGetCurrentContext() };
-    let previous_draw = unsafe { eglGetCurrentSurface(EGL_DRAW) };
-    let previous_read = unsafe { eglGetCurrentSurface(EGL_READ) };
-    let previous_api = unsafe { eglQueryAPI() };
-    let copy_display = state.copy_display as EglDisplay;
-    let copy_context = state.copy_context as EglContext;
-    if unsafe { eglBindAPI(state.copy_api) } == 0
-        || unsafe { eglMakeCurrent(copy_display, ptr::null_mut(), ptr::null_mut(), copy_context) }
-            == 0
-    {
-        unsafe { eglBindAPI(previous_api) };
-        publish_dma_buf_result(frame.generation, -32, 0, false);
-        return -32;
+    pub(crate) fn mark_frame_available(&self) -> i32 {
+        let texture = match self.texture.lock() {
+            Ok(texture) => texture.clone(),
+            Err(_) => return -2,
+        };
+        let Some(texture) = texture else {
+            return -1;
+        };
+        texture.mark_frame_available();
+        0
     }
 
-    let frame_width = frame.visible_width.max(0) as u32;
-    let frame_height = frame.visible_height.max(0) as u32;
-    let mut preparation_status = 0;
-    if frame_width == 0 || frame_height == 0 {
-        preparation_status = -33;
-    } else if state.allocated_width != frame_width || state.allocated_height != frame_height {
-        for name in state.names {
-            unsafe {
-                epoxy_glBindTexture(GL_TEXTURE_2D, name);
-                epoxy_glTexImage2D(
-                    GL_TEXTURE_2D,
-                    0,
-                    GL_RGBA8,
-                    frame_width as i32,
-                    frame_height as i32,
-                    0,
-                    GL_RGBA,
-                    GL_UNSIGNED_BYTE,
-                    ptr::null(),
-                );
+    pub(crate) fn copy_dma_buf(&self, frame: &DmaBufFrame) -> i32 {
+        let Ok(mut state) = self.provider.state.lock() else {
+            self.publish_dma_buf_result(frame.generation, -2, 0, false);
+            return -2;
+        };
+        if state.copy_context == 0
+            || state.published_name() == 0
+            || state.allocated_width == 0
+            || state.allocated_height == 0
+        {
+            self.publish_dma_buf_result(frame.generation, -31, 0, false);
+            return -31;
+        }
+
+        // SAFETY: The copy context is private to this state, shares Flutter's
+        // texture namespace, and is restored before returning to WPE.
+        unsafe { self.copy_dma_buf_locked(&mut state, frame) }
+    }
+}
+
+impl TextureState {
+    unsafe fn copy_dma_buf_locked(&self, state: &mut GlState, frame: &DmaBufFrame) -> i32 {
+        let previous_display = unsafe { eglGetCurrentDisplay() };
+        let previous_context = unsafe { eglGetCurrentContext() };
+        let previous_draw = unsafe { eglGetCurrentSurface(EGL_DRAW) };
+        let previous_read = unsafe { eglGetCurrentSurface(EGL_READ) };
+        let previous_api = unsafe { eglQueryAPI() };
+        let copy_display = state.copy_display as EglDisplay;
+        let copy_context = state.copy_context as EglContext;
+        if unsafe { eglBindAPI(state.copy_api) } == 0
+            || unsafe {
+                eglMakeCurrent(copy_display, ptr::null_mut(), ptr::null_mut(), copy_context)
+            } == 0
+        {
+            unsafe { eglBindAPI(previous_api) };
+            self.publish_dma_buf_result(frame.generation, -32, 0, false);
+            return -32;
+        }
+
+        let frame_width = frame.visible_width.max(0) as u32;
+        let frame_height = frame.visible_height.max(0) as u32;
+        let mut preparation_status = 0;
+        if frame_width == 0 || frame_height == 0 {
+            preparation_status = -33;
+        } else if state.allocated_width != frame_width || state.allocated_height != frame_height {
+            for name in state.names {
+                unsafe {
+                    epoxy_glBindTexture(GL_TEXTURE_2D, name);
+                    epoxy_glTexImage2D(
+                        GL_TEXTURE_2D,
+                        0,
+                        GL_RGBA8,
+                        frame_width as i32,
+                        frame_height as i32,
+                        0,
+                        GL_RGBA,
+                        GL_UNSIGNED_BYTE,
+                        ptr::null(),
+                    );
+                }
+            }
+            if unsafe { epoxy_glGetError() } != GL_NO_ERROR {
+                preparation_status = -34;
+            } else {
+                state.published_slot = 0;
+                state.allocated_width = frame_width;
+                state.allocated_height = frame_height;
+                state.uploaded_generation = 0;
+                state.imported_dma_buf_generation = 0;
             }
         }
-        if unsafe { epoxy_glGetError() } != GL_NO_ERROR {
-            preparation_status = -34;
+
+        let destination_slot = (state.published_slot + 1) % TEXTURE_SLOT_COUNT;
+        let destination_name = state.names[destination_slot];
+        let started = Instant::now();
+        let mut fence_fallback = false;
+        let status = if preparation_status != 0 {
+            preparation_status
         } else {
-            state.published_slot = 0;
-            state.allocated_width = frame_width;
-            state.allocated_height = frame_height;
-            state.uploaded_generation = 0;
-            state.imported_dma_buf_generation = 0;
+            unsafe {
+                copy_dma_buf_to_texture(
+                    frame,
+                    destination_name,
+                    state.allocated_width,
+                    state.allocated_height,
+                    &mut fence_fallback,
+                )
+            }
+        };
+        let copy_micros = started.elapsed().as_micros().min(u128::from(u64::MAX)) as u64;
+        if status == 0 {
+            state.published_slot = destination_slot;
+            state.imported_dma_buf_generation = frame.generation;
+            self.metrics
+                .gl_name
+                .store(destination_name, Ordering::Release);
         }
+        self.publish_dma_buf_result(frame.generation, status, copy_micros, fence_fallback);
+
+        if !previous_display.is_null() {
+            unsafe {
+                eglMakeCurrent(
+                    previous_display,
+                    previous_draw,
+                    previous_read,
+                    previous_context,
+                )
+            };
+        } else {
+            unsafe {
+                eglMakeCurrent(
+                    copy_display,
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                    ptr::null_mut(),
+                )
+            };
+        }
+        unsafe { eglBindAPI(previous_api) };
+        status
     }
 
-    let destination_slot = (state.published_slot + 1) % TEXTURE_SLOT_COUNT;
-    let destination_name = state.names[destination_slot];
-    let started = Instant::now();
-    let mut fence_fallback = false;
-    let status = if preparation_status != 0 {
-        preparation_status
-    } else {
-        unsafe {
-            copy_dma_buf_to_texture(
-                frame,
-                destination_name,
-                state.allocated_width,
-                state.allocated_height,
-                &mut fence_fallback,
-            )
+    fn publish_dma_buf_result(
+        &self,
+        generation: u64,
+        status: i32,
+        copy_micros: u64,
+        fallback: bool,
+    ) {
+        self.metrics
+            .dma_buf_generation
+            .store(generation, Ordering::Release);
+        self.metrics
+            .dma_buf_status
+            .store(i64::from(status), Ordering::Release);
+        self.metrics
+            .dma_buf_last_copy_micros
+            .store(copy_micros, Ordering::Release);
+        self.metrics
+            .dma_buf_max_copy_micros
+            .fetch_max(copy_micros, Ordering::AcqRel);
+        if status == 0 {
+            self.metrics
+                .dma_buf_copy_count
+                .fetch_add(1, Ordering::AcqRel);
         }
-    };
-    let copy_micros = started.elapsed().as_micros().min(u128::from(u64::MAX)) as u64;
-    if status == 0 {
-        state.published_slot = destination_slot;
-        state.imported_dma_buf_generation = frame.generation;
-        FLUTTER_TEXTURE_GL_NAME.store(destination_name, Ordering::Release);
+        if fallback {
+            self.metrics
+                .dma_buf_fence_fallback_count
+                .fetch_add(1, Ordering::AcqRel);
+        }
     }
-    publish_dma_buf_result(frame.generation, status, copy_micros, fence_fallback);
-
-    if !previous_display.is_null() {
-        unsafe {
-            eglMakeCurrent(
-                previous_display,
-                previous_draw,
-                previous_read,
-                previous_context,
-            )
-        };
-    } else {
-        unsafe {
-            eglMakeCurrent(
-                copy_display,
-                ptr::null_mut(),
-                ptr::null_mut(),
-                ptr::null_mut(),
-            )
-        };
-    }
-    unsafe { eglBindAPI(previous_api) };
-    status
 }
 
 unsafe fn copy_dma_buf_to_texture(
@@ -834,17 +921,4 @@ unsafe fn copy_dma_buf_to_texture(
         epoxy_eglDestroyImageKHR(display, image);
     }
     status
-}
-
-fn publish_dma_buf_result(generation: u64, status: i32, copy_micros: u64, fallback: bool) {
-    FLUTTER_TEXTURE_DMA_BUF_GENERATION.store(generation, Ordering::Release);
-    FLUTTER_TEXTURE_DMA_BUF_STATUS.store(i64::from(status), Ordering::Release);
-    FLUTTER_TEXTURE_DMA_BUF_LAST_COPY_MICROS.store(copy_micros, Ordering::Release);
-    FLUTTER_TEXTURE_DMA_BUF_MAX_COPY_MICROS.fetch_max(copy_micros, Ordering::AcqRel);
-    if status == 0 {
-        FLUTTER_TEXTURE_DMA_BUF_COPY_COUNT.fetch_add(1, Ordering::AcqRel);
-    }
-    if fallback {
-        FLUTTER_TEXTURE_DMA_BUF_FENCE_FALLBACK_COUNT.fetch_add(1, Ordering::AcqRel);
-    }
 }

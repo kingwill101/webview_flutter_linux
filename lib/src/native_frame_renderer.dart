@@ -36,41 +36,40 @@ final class NativeFrameRenderer {
     required int engineHandle,
     String initialUrl = 'about:blank',
   }) : apiVersion = webviewFlutterLinuxApiVersion() {
-    if (_active) {
-      throw StateError(
-        'webview_flutter_linux currently supports one active WebViewWidget. '
-        'Multiple-view support requires the handle-based native runtime.',
-      );
-    }
-    _active = true;
+    var createdHandle = 0;
+    final outputHandle = calloc<Uint64>();
+    final nativeUrl = initialUrl.toNativeUtf8();
     try {
       _checkStatus(
-        'Flutter texture initialization',
-        webviewFlutterLinuxTextureInitialize(engineHandle),
-        allowAlreadyInitialized: false,
+        'native WebView creation',
+        webviewFlutterLinuxViewCreate(
+          engineHandle,
+          nativeUrl.cast(),
+          outputHandle,
+        ),
       );
-      final nativeUrl = initialUrl.toNativeUtf8();
-      try {
-        _checkStatus(
-          'WPE initialization',
-          webviewFlutterLinuxWpeInitialize(nativeUrl.cast()),
-          allowAlreadyInitialized: false,
-        );
-      } finally {
-        calloc.free(nativeUrl);
+      createdHandle = outputHandle.value;
+      if (createdHandle == 0) {
+        throw StateError('Native WebView creation returned an invalid handle.');
       }
-      _lastClipboardChangeCount = webviewFlutterLinuxWpeClipboardChangeCount();
+      handle = createdHandle;
+      _lastClipboardChangeCount = webviewFlutterLinuxWpeClipboardChangeCount(
+        handle,
+      );
       setVisibility(true);
     } catch (_) {
-      webviewFlutterLinuxShutdown();
-      _active = false;
+      if (createdHandle != 0) {
+        webviewFlutterLinuxViewDispose(createdHandle);
+      }
       rethrow;
+    } finally {
+      calloc.free(nativeUrl);
+      calloc.free(outputHandle);
     }
   }
 
-  static bool _active = false;
-
   final int apiVersion;
+  late final int handle;
   int _lastRequestedTextureGeneration = -1;
   int _lastPaintCount = 0;
   int _lastContextMenuGeneration = 0;
@@ -78,21 +77,21 @@ final class NativeFrameRenderer {
   double _deviceScaleFactor = 1;
   bool _disposed = false;
 
-  int get textureId => webviewFlutterLinuxTextureId();
-  int get textureWidth => webviewFlutterLinuxTextureWidth();
-  int get textureHeight => webviewFlutterLinuxTextureHeight();
-  int get paintCount => webviewFlutterLinuxWpePaintCount();
+  int get textureId => webviewFlutterLinuxTextureId(handle);
+  int get textureWidth => webviewFlutterLinuxTextureWidth(handle);
+  int get textureHeight => webviewFlutterLinuxTextureHeight(handle);
+  int get paintCount => webviewFlutterLinuxWpePaintCount(handle);
 
   bool pump() {
     _ensureAlive();
-    _checkStatus('WPE event pump', webviewFlutterLinuxWpePump());
-    final generation = webviewFlutterLinuxTextureGeneration();
+    _checkStatus('WPE event pump', webviewFlutterLinuxWpePump(handle));
+    final generation = webviewFlutterLinuxTextureGeneration(handle);
     final nextPaintCount = paintCount;
     if (generation != _lastRequestedTextureGeneration ||
         nextPaintCount != _lastPaintCount) {
       _checkStatus(
         'Flutter texture frame request',
-        webviewFlutterLinuxTextureRequestFrame(),
+        webviewFlutterLinuxTextureRequestFrame(handle),
       );
       _lastRequestedTextureGeneration = generation;
       _lastPaintCount = nextPaintCount;
@@ -107,7 +106,7 @@ final class NativeFrameRenderer {
     try {
       _checkStatus(
         'navigation',
-        webviewFlutterLinuxWpeNavigate(nativeUrl.cast()),
+        webviewFlutterLinuxWpeNavigate(handle, nativeUrl.cast()),
       );
     } finally {
       calloc.free(nativeUrl);
@@ -131,20 +130,23 @@ final class NativeFrameRenderer {
     );
     _checkStatus(
       'surface resize',
-      webviewFlutterLinuxWpeResize(physicalWidth, physicalHeight),
+      webviewFlutterLinuxWpeResize(handle, physicalWidth, physicalHeight),
     );
   }
 
   void setFocus(bool focused) {
     _ensureAlive();
-    _checkStatus('focus', webviewFlutterLinuxWpeSetFocus(focused ? 1 : 0));
+    _checkStatus(
+      'focus',
+      webviewFlutterLinuxWpeSetFocus(handle, focused ? 1 : 0),
+    );
   }
 
   void setVisibility(bool visible) {
     _ensureAlive();
     _checkStatus(
       'visibility',
-      webviewFlutterLinuxWpeSetVisibility(visible ? 1 : 0),
+      webviewFlutterLinuxWpeSetVisibility(handle, visible ? 1 : 0),
     );
   }
 
@@ -158,6 +160,7 @@ final class NativeFrameRenderer {
     _checkStatus(
       'mouse move',
       webviewFlutterLinuxWpeSendMouseMove(
+        handle,
         _physicalCoordinate(x),
         _physicalCoordinate(y),
         modifiers,
@@ -178,6 +181,7 @@ final class NativeFrameRenderer {
     _checkStatus(
       'mouse button',
       webviewFlutterLinuxWpeSendMouseButton(
+        handle,
         _physicalCoordinate(x),
         _physicalCoordinate(y),
         modifiers,
@@ -199,6 +203,7 @@ final class NativeFrameRenderer {
     _checkStatus(
       'mouse wheel',
       webviewFlutterLinuxWpeSendMouseWheel(
+        handle,
         _physicalCoordinate(x),
         _physicalCoordinate(y),
         modifiers,
@@ -220,6 +225,7 @@ final class NativeFrameRenderer {
     _checkStatus(
       'key',
       webviewFlutterLinuxWpeSendKey(
+        handle,
         eventType,
         modifiers,
         windowsKeyCode,
@@ -236,9 +242,11 @@ final class NativeFrameRenderer {
     try {
       _checkStatus(
         'clipboard write',
-        webviewFlutterLinuxWpeClipboardSetText(nativeText.cast()),
+        webviewFlutterLinuxWpeClipboardSetText(handle, nativeText.cast()),
       );
-      _lastClipboardChangeCount = webviewFlutterLinuxWpeClipboardChangeCount();
+      _lastClipboardChangeCount = webviewFlutterLinuxWpeClipboardChangeCount(
+        handle,
+      );
     } finally {
       calloc.free(nativeText);
     }
@@ -246,17 +254,18 @@ final class NativeFrameRenderer {
 
   String? takeClipboardText() {
     _ensureAlive();
-    final changeCount = webviewFlutterLinuxWpeClipboardChangeCount();
+    final changeCount = webviewFlutterLinuxWpeClipboardChangeCount(handle);
     if (changeCount < 0 || changeCount == _lastClipboardChangeCount) {
       return null;
     }
-    final length = webviewFlutterLinuxWpeClipboardTextLength();
+    final length = webviewFlutterLinuxWpeClipboardTextLength(handle);
     if (length < 0) return null;
     _lastClipboardChangeCount = changeCount;
     if (length == 0) return '';
     final destination = calloc<Uint8>(length);
     try {
       final copied = webviewFlutterLinuxWpeClipboardCopyText(
+        handle,
         destination,
         length,
       );
@@ -271,20 +280,24 @@ final class NativeFrameRenderer {
 
   NativeBrowserContextMenu? takeContextMenu() {
     _ensureAlive();
-    final generation = webviewFlutterLinuxWpeContextMenuGeneration();
+    final generation = webviewFlutterLinuxWpeContextMenuGeneration(handle);
     if (generation == 0 || generation == _lastContextMenuGeneration) {
       return null;
     }
     _lastContextMenuGeneration = generation;
-    final itemCount = webviewFlutterLinuxWpeContextMenuItemCount();
+    final itemCount = webviewFlutterLinuxWpeContextMenuItemCount(handle);
     final items = <BrowserContextMenuItem>[];
     for (var index = 0; index < itemCount; index += 1) {
-      final length = webviewFlutterLinuxWpeContextMenuItemTitleLength(index);
+      final length = webviewFlutterLinuxWpeContextMenuItemTitleLength(
+        handle,
+        index,
+      );
       var title = '';
       if (length > 0) {
         final destination = calloc<Uint8>(length);
         try {
           final copied = webviewFlutterLinuxWpeContextMenuItemCopyTitle(
+            handle,
             index,
             destination,
             length,
@@ -304,15 +317,18 @@ final class NativeFrameRenderer {
           index: index,
           title: title.replaceAll(RegExp(r'[_&]'), ''),
           isSeparator:
-              webviewFlutterLinuxWpeContextMenuItemIsSeparator(index) != 0,
-          isEnabled: webviewFlutterLinuxWpeContextMenuItemIsEnabled(index) != 0,
+              webviewFlutterLinuxWpeContextMenuItemIsSeparator(handle, index) !=
+              0,
+          isEnabled:
+              webviewFlutterLinuxWpeContextMenuItemIsEnabled(handle, index) !=
+              0,
         ),
       );
     }
     return NativeBrowserContextMenu(
       position: Offset(
-        webviewFlutterLinuxWpeContextMenuX() / _deviceScaleFactor,
-        webviewFlutterLinuxWpeContextMenuY() / _deviceScaleFactor,
+        webviewFlutterLinuxWpeContextMenuX(handle) / _deviceScaleFactor,
+        webviewFlutterLinuxWpeContextMenuY(handle) / _deviceScaleFactor,
       ),
       items: items,
     );
@@ -322,12 +338,12 @@ final class NativeFrameRenderer {
     _ensureAlive();
     _checkStatus(
       'context-menu action',
-      webviewFlutterLinuxWpeContextMenuActivate(index),
+      webviewFlutterLinuxWpeContextMenuActivate(handle, index),
     );
   }
 
   void dismissContextMenu() {
-    if (!_disposed) webviewFlutterLinuxWpeContextMenuDismiss();
+    if (!_disposed) webviewFlutterLinuxWpeContextMenuDismiss(handle);
   }
 
   int _physicalCoordinate(int logicalCoordinate) =>
@@ -351,7 +367,9 @@ final class NativeFrameRenderer {
   void dispose() {
     if (_disposed) return;
     _disposed = true;
-    webviewFlutterLinuxShutdown();
-    _active = false;
+    _checkStatus(
+      'native WebView disposal',
+      webviewFlutterLinuxViewDispose(handle),
+    );
   }
 }

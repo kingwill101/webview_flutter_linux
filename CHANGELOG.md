@@ -5,3 +5,4 @@
 - Render accelerated WPE DMA-BUF frames through an Irondash Flutter texture.
 - Support basic navigation, input, audio, plain-text clipboard bridging, and
   context menus.
+- Support multiple simultaneous WebViews through handle-scoped native state.

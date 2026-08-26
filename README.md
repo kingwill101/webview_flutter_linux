@@ -60,11 +60,10 @@ The browser runtime remains a system dependency.
 - audio through WebKit/GStreamer
 - bidirectional plain-text clipboard bridging
 - Flutter-rendered context menus backed by WebKit actions
+- multiple simultaneous `WebViewWidget`s with handle-scoped native state
 
 ## Current limitations
 
-- One active `WebViewWidget` is supported. The native runtime and texture state
-  still need to become handle-scoped before multiple simultaneous views work.
 - JavaScript evaluation/channels, cookies, custom HTTP requests, IME
   composition, cursor updates, popups, rich clipboard formats, downloads,
   dialogs, permissions, accessibility, and crash recovery are not complete.

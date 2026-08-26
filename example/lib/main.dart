@@ -50,14 +50,15 @@ class _BrowserPageState extends State<BrowserPage> {
   final TextEditingController _addressController = TextEditingController(
     text: 'https://example.com',
   );
-  late final WebViewController _controller;
+  late final WebViewController _primaryController;
+  late final WebViewController _secondaryController;
   int _progress = 0;
   String? _currentUrl;
 
   @override
   void initState() {
     super.initState();
-    _controller = WebViewController()
+    _primaryController = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       ..setNavigationDelegate(
         NavigationDelegate(
@@ -71,6 +72,21 @@ class _BrowserPageState extends State<BrowserPage> {
         ),
       )
       ..loadRequest(Uri.parse(_addressController.text));
+    _secondaryController = WebViewController()
+      ..setJavaScriptMode(JavaScriptMode.unrestricted)
+      ..loadHtmlString('''
+        <!doctype html>
+        <html>
+          <body style="margin:0;background:#17152a;color:#ede9ff;
+                       font:24px system-ui;display:grid;place-items:center;
+                       height:100vh">
+            <main style="text-align:center">
+              <h1>Independent WebView</h1>
+              <p>Second native handle and Flutter texture</p>
+            </main>
+          </body>
+        </html>
+      ''');
   }
 
   @override
@@ -84,7 +100,7 @@ class _BrowserPageState extends State<BrowserPage> {
     if (raw.isEmpty) return;
     final uri = Uri.tryParse(raw.contains('://') ? raw : 'https://$raw');
     if (uri == null || !uri.hasScheme) return;
-    await _controller.loadRequest(uri);
+    await _primaryController.loadRequest(uri);
   }
 
   @override
@@ -107,17 +123,17 @@ class _BrowserPageState extends State<BrowserPage> {
               children: [
                 IconButton(
                   tooltip: 'Back',
-                  onPressed: () => _controller.goBack(),
+                  onPressed: () => _primaryController.goBack(),
                   icon: const Icon(Icons.arrow_back),
                 ),
                 IconButton(
                   tooltip: 'Forward',
-                  onPressed: () => _controller.goForward(),
+                  onPressed: () => _primaryController.goForward(),
                   icon: const Icon(Icons.arrow_forward),
                 ),
                 IconButton(
                   tooltip: 'Reload',
-                  onPressed: () => _controller.reload(),
+                  onPressed: () => _primaryController.reload(),
                   icon: const Icon(Icons.refresh),
                 ),
                 Expanded(
@@ -141,7 +157,17 @@ class _BrowserPageState extends State<BrowserPage> {
               label: 'Current URL',
               child: SizedBox.shrink(key: ValueKey<String>(url)),
             ),
-          Expanded(child: WebViewWidget(controller: _controller)),
+          Expanded(
+            child: Row(
+              children: [
+                Expanded(child: WebViewWidget(controller: _primaryController)),
+                const VerticalDivider(width: 1),
+                Expanded(
+                  child: WebViewWidget(controller: _secondaryController),
+                ),
+              ],
+            ),
+          ),
         ],
       ),
     );

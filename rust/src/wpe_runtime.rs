@@ -4,8 +4,10 @@
 
 use std::{
     cell::RefCell,
+    collections::HashMap,
     ffi::{CStr, c_char},
     os::fd::{FromRawFd, OwnedFd},
+    rc::{Rc, Weak},
     sync::atomic::{AtomicU32, AtomicU64, Ordering},
 };
 
@@ -223,21 +225,31 @@ unsafe extern "C" {
     fn wpe_event_unref(event: *mut WpeEvent);
 }
 
-static FRAME_GENERATION: AtomicU64 = AtomicU64::new(0);
-static PAINT_COUNT: AtomicU64 = AtomicU64::new(0);
-static VALID_PAINT_COUNT: AtomicU64 = AtomicU64::new(0);
-static PLANE_COUNT: AtomicU32 = AtomicU32::new(0);
-static FORMAT: AtomicU32 = AtomicU32::new(0);
-static MODIFIER: AtomicU64 = AtomicU64::new(0);
-static WIDTH_PX: AtomicU32 = AtomicU32::new(0);
-static HEIGHT_PX: AtomicU32 = AtomicU32::new(0);
-static FIRST_PLANE_STRIDE: AtomicU32 = AtomicU32::new(0);
-static CONTEXT_MENU_GENERATION: AtomicU64 = AtomicU64::new(0);
-
 struct WpeRuntime {
     webview: glib::Object,
     view: *mut WpeView,
     toplevel: *mut WpeToplevel,
+}
+
+#[derive(Default)]
+struct WpeMetrics {
+    frame_generation: AtomicU64,
+    paint_count: AtomicU64,
+    valid_paint_count: AtomicU64,
+    plane_count: AtomicU32,
+    format: AtomicU32,
+    modifier: AtomicU64,
+    width: AtomicU32,
+    height: AtomicU32,
+    first_plane_stride: AtomicU32,
+    context_menu_generation: AtomicU64,
+}
+
+struct NativeView {
+    runtime: RefCell<Option<WpeRuntime>>,
+    context_menu: RefCell<Option<ContextMenuSnapshot>>,
+    metrics: WpeMetrics,
+    texture: std::sync::Arc<crate::linux_texture::TextureState>,
 }
 
 struct ContextMenuSnapshot {
@@ -267,8 +279,23 @@ impl Drop for ContextMenuItemSnapshot {
 }
 
 thread_local! {
-    static RUNTIME: RefCell<Option<WpeRuntime>> = const { RefCell::new(None) };
-    static CONTEXT_MENU: RefCell<Option<ContextMenuSnapshot>> = const { RefCell::new(None) };
+    static VIEWS: RefCell<HashMap<u64, Rc<NativeView>>> = RefCell::new(HashMap::new());
+    static NEXT_HANDLE: RefCell<u64> = const { RefCell::new(1) };
+}
+
+fn native_view(handle: u64) -> Option<Rc<NativeView>> {
+    if handle == 0 {
+        return None;
+    }
+    VIEWS.with_borrow(|views| views.get(&handle).cloned())
+}
+
+fn next_handle() -> u64 {
+    NEXT_HANDLE.with_borrow_mut(|next| {
+        let handle = (*next).max(1);
+        *next = handle.wrapping_add(1).max(1);
+        handle
+    })
 }
 
 fn required_c_string(pointer: *const c_char) -> Result<String, i32> {
@@ -282,21 +309,9 @@ fn required_c_string(pointer: *const c_char) -> Result<String, i32> {
         .map_err(|_| -2)
 }
 
-fn reset_metrics() {
-    FRAME_GENERATION.store(0, Ordering::Release);
-    PAINT_COUNT.store(0, Ordering::Release);
-    VALID_PAINT_COUNT.store(0, Ordering::Release);
-    PLANE_COUNT.store(0, Ordering::Release);
-    FORMAT.store(0, Ordering::Release);
-    MODIFIER.store(0, Ordering::Release);
-    WIDTH_PX.store(0, Ordering::Release);
-    HEIGHT_PX.store(0, Ordering::Release);
-    FIRST_PLANE_STRIDE.store(0, Ordering::Release);
-    CONTEXT_MENU_GENERATION.store(0, Ordering::Release);
-    CONTEXT_MENU.with_borrow_mut(|menu| menu.take());
-}
-
-fn build_webview() -> Result<(glib::Object, *mut WpeView, *mut WpeToplevel), i32> {
+fn build_webview(
+    native_view: Weak<NativeView>,
+) -> Result<(glib::Object, *mut WpeView, *mut WpeToplevel), i32> {
     // SAFETY: WPE constructors return transfer-full GObject pointers.
     let display = unsafe { wpe_display_headless_new() };
     if display.is_null() {
@@ -351,7 +366,7 @@ fn build_webview() -> Result<(glib::Object, *mut WpeView, *mut WpeToplevel), i32
             webkit_settings_set_media_playback_requires_user_gesture(settings, 0);
         }
     }
-    connect_context_menu(&webview);
+    connect_context_menu(&webview, native_view.clone());
     // SAFETY: raw_webview is borrowed from the owned WebView.
     if unsafe { webkit_web_view_get_display(raw_webview) } != display {
         return Err(-6);
@@ -366,11 +381,11 @@ fn build_webview() -> Result<(glib::Object, *mut WpeView, *mut WpeToplevel), i32
     if toplevel.is_null() {
         return Err(-8);
     }
-    connect_buffer_rendered(view);
+    connect_buffer_rendered(view, native_view);
     Ok((webview, view, toplevel))
 }
 
-fn connect_context_menu(webview: &glib::Object) {
+fn connect_context_menu(webview: &glib::Object, native_view: Weak<NativeView>) {
     webview.connect_closure(
         "context-menu",
         false,
@@ -415,20 +430,24 @@ fn connect_context_menu(webview: &glib::Object) {
                     target,
                 });
             }
-            CONTEXT_MENU_GENERATION.fetch_add(1, Ordering::AcqRel);
-            CONTEXT_MENU.with_borrow_mut(|snapshot| {
-                snapshot.replace(ContextMenuSnapshot {
-                    x: f64::from(x),
-                    y: f64::from(y),
-                    items,
-                });
-            });
+            let Some(native_view) = native_view.upgrade() else {
+                return true;
+            };
+            native_view
+                .metrics
+                .context_menu_generation
+                .fetch_add(1, Ordering::AcqRel);
+            native_view.context_menu.replace(Some(ContextMenuSnapshot {
+                x: f64::from(x),
+                y: f64::from(y),
+                items,
+            }));
             true
         }),
     );
 }
 
-fn connect_buffer_rendered(view: *mut WpeView) {
+fn connect_buffer_rendered(view: *mut WpeView, native_view: Weak<NativeView>) {
     // SAFETY: view is a transfer-none GObject kept alive by the WebView.
     let view_object: glib::Object = unsafe { glib::translate::from_glib_none(view.cast()) };
     // SAFETY: The WPE type function returns a registered GType.
@@ -441,14 +460,24 @@ fn connect_buffer_rendered(view: *mut WpeView) {
             let raw_buffer = ToGlibPtr::<*mut glib::gobject_ffi::GObject>::to_glib_none(&buffer).0
                 as *mut WpeBuffer;
             let view = raw_view as *mut WpeView;
-            PAINT_COUNT.fetch_add(1, Ordering::AcqRel);
+            let Some(native_view) = native_view.upgrade() else {
+                unsafe { wpe_view_buffer_released(view, raw_buffer) };
+                return;
+            };
+            native_view
+                .metrics
+                .paint_count
+                .fetch_add(1, Ordering::AcqRel);
             if buffer.type_().is_a(dma_buf_type) {
                 // The callback owns the buffer until it explicitly releases it.
                 // Import and complete the GPU copy synchronously in that window.
-                let status = unsafe { copy_rendered_dma_buf(raw_buffer) };
+                let status = unsafe { copy_rendered_dma_buf(&native_view, raw_buffer) };
                 if status == 0 {
-                    VALID_PAINT_COUNT.fetch_add(1, Ordering::AcqRel);
-                    crate::notify_flutter_texture_frame();
+                    native_view
+                        .metrics
+                        .valid_paint_count
+                        .fetch_add(1, Ordering::AcqRel);
+                    native_view.texture.mark_frame_available();
                 }
             }
             // SAFETY: WPE emitted this buffer for this view; every callback path
@@ -458,7 +487,7 @@ fn connect_buffer_rendered(view: *mut WpeView) {
     );
 }
 
-unsafe fn copy_rendered_dma_buf(buffer: *mut WpeBuffer) -> i32 {
+unsafe fn copy_rendered_dma_buf(native_view: &NativeView, buffer: *mut WpeBuffer) -> i32 {
     let dma_buf = buffer.cast::<WpeBufferDmaBuf>();
     let width = unsafe { wpe_buffer_get_width(buffer) };
     let height = unsafe { wpe_buffer_get_height(buffer) };
@@ -484,7 +513,9 @@ unsafe fn copy_rendered_dma_buf(buffer: *mut WpeBuffer) -> i32 {
         }
     }
 
-    let generation = FRAME_GENERATION
+    let generation = native_view
+        .metrics
+        .frame_generation
         .fetch_add(1, Ordering::AcqRel)
         .wrapping_add(1)
         .max(1);
@@ -513,30 +544,62 @@ unsafe fn copy_rendered_dma_buf(buffer: *mut WpeBuffer) -> i32 {
         }
     }
 
-    PLANE_COUNT.store(plane_count, Ordering::Release);
-    FORMAT.store(frame.format, Ordering::Release);
-    MODIFIER.store(frame.modifier, Ordering::Release);
-    WIDTH_PX.store(width as u32, Ordering::Release);
-    HEIGHT_PX.store(height as u32, Ordering::Release);
-    FIRST_PLANE_STRIDE.store(frame.strides[0], Ordering::Release);
+    native_view
+        .metrics
+        .plane_count
+        .store(plane_count, Ordering::Release);
+    native_view
+        .metrics
+        .format
+        .store(frame.format, Ordering::Release);
+    native_view
+        .metrics
+        .modifier
+        .store(frame.modifier, Ordering::Release);
+    native_view
+        .metrics
+        .width
+        .store(width as u32, Ordering::Release);
+    native_view
+        .metrics
+        .height
+        .store(height as u32, Ordering::Release);
+    native_view
+        .metrics
+        .first_plane_stride
+        .store(frame.strides[0], Ordering::Release);
 
-    let resize_status = crate::webview_flutter_linux_texture_resize(width as u32, height as u32);
+    let resize_status = native_view.texture.resize(width as u32, height as u32);
     if resize_status != 0 {
         return resize_status;
     }
-    crate::linux_texture::copy_dma_buf(&frame)
+    native_view.texture.copy_dma_buf(&frame)
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn webview_flutter_linux_wpe_initialize(initial_url: *const c_char) -> i32 {
+pub unsafe extern "C" fn webview_flutter_linux_view_create(
+    engine_handle: i64,
+    initial_url: *const c_char,
+    output_handle: *mut u64,
+) -> i32 {
+    if output_handle.is_null() {
+        return -1;
+    }
     let initial_url = match required_c_string(initial_url) {
         Ok(value) => value,
         Err(status) => return status,
     };
-    if RUNTIME.with_borrow(|runtime| runtime.is_some()) {
-        return 1;
-    }
-    let (webview, view, toplevel) = match build_webview() {
+    let texture = match crate::linux_texture::TextureState::new(engine_handle) {
+        Ok(texture) => texture,
+        Err(status) => return status,
+    };
+    let native_view = Rc::new(NativeView {
+        runtime: RefCell::new(None),
+        context_menu: RefCell::new(None),
+        metrics: WpeMetrics::default(),
+        texture,
+    });
+    let (webview, view, toplevel) = match build_webview(Rc::downgrade(&native_view)) {
         Ok(parts) => parts,
         Err(status) => return status,
     };
@@ -546,47 +609,93 @@ pub extern "C" fn webview_flutter_linux_wpe_initialize(initial_url: *const c_cha
         Ok(url) => url,
         Err(_) => return -2,
     };
-    reset_metrics();
     // SAFETY: raw_webview is borrowed from webview; WebKit copies the URI.
     unsafe { webkit_web_view_load_uri(raw_webview, url.as_ptr()) };
-    RUNTIME.with_borrow_mut(|runtime| {
-        runtime.replace(WpeRuntime {
-            webview,
-            view,
-            toplevel,
-        });
+    native_view.runtime.replace(Some(WpeRuntime {
+        webview,
+        view,
+        toplevel,
+    }));
+    let handle = next_handle();
+    VIEWS.with_borrow_mut(|views| {
+        views.insert(handle, native_view);
     });
+    unsafe { output_handle.write(handle) };
     0
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn webview_flutter_linux_wpe_shutdown() -> i32 {
-    CONTEXT_MENU.with_borrow_mut(|menu| menu.take());
-    if RUNTIME.with_borrow_mut(Option::take).is_some() {
-        0
-    } else {
-        1
-    }
+pub extern "C" fn webview_flutter_linux_view_dispose(handle: u64) -> i32 {
+    let native_view = VIEWS.with_borrow_mut(|views| views.remove(&handle));
+    let Some(native_view) = native_view else {
+        return -1;
+    };
+    native_view.context_menu.take();
+    native_view.runtime.take();
+    native_view.texture.shutdown()
 }
 
-fn with_context_menu_item<T>(
+#[unsafe(no_mangle)]
+pub extern "C" fn webview_flutter_linux_texture_id(handle: u64) -> i64 {
+    native_view(handle).map_or(0, |view| view.texture.id())
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn webview_flutter_linux_texture_width(handle: u64) -> u32 {
+    native_view(handle).map_or(0, |view| view.texture.width())
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn webview_flutter_linux_texture_height(handle: u64) -> u32 {
+    native_view(handle).map_or(0, |view| view.texture.height())
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn webview_flutter_linux_texture_generation(handle: u64) -> u64 {
+    native_view(handle).map_or(0, |view| view.texture.generation())
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn webview_flutter_linux_texture_request_frame(handle: u64) -> i32 {
+    native_view(handle).map_or(-1, |view| view.texture.mark_frame_available())
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn webview_flutter_linux_texture_dma_buf_copy_count(handle: u64) -> u64 {
+    native_view(handle).map_or(0, |view| view.texture.dma_buf_copy_count())
+}
+
+fn with_context_menu_item<T: Copy>(
+    handle: u64,
     index: u32,
     fallback: T,
     operation: impl FnOnce(&ContextMenuItemSnapshot) -> T,
 ) -> T {
-    CONTEXT_MENU.with_borrow(|snapshot| {
-        let Some(snapshot) = snapshot.as_ref() else {
-            return fallback;
-        };
-        snapshot
-            .items
-            .get(index as usize)
-            .map_or(fallback, operation)
-    })
+    let Some(native_view) = native_view(handle) else {
+        return fallback;
+    };
+    native_view
+        .context_menu
+        .borrow()
+        .as_ref()
+        .map_or(fallback, |snapshot| {
+            snapshot
+                .items
+                .get(index as usize)
+                .map_or(fallback, operation)
+        })
 }
 
-fn with_clipboard<T>(fallback: T, operation: impl FnOnce(*mut WpeClipboard) -> T) -> T {
-    RUNTIME.with_borrow(|runtime| {
+fn with_clipboard<T>(
+    handle: u64,
+    fallback: T,
+    operation: impl FnOnce(*mut WpeClipboard) -> T,
+) -> T {
+    let Some(native_view) = native_view(handle) else {
+        return fallback;
+    };
+    {
+        let runtime = native_view.runtime.borrow();
         let Some(runtime) = runtime.as_ref() else {
             return fallback;
         };
@@ -603,21 +712,21 @@ fn with_clipboard<T>(fallback: T, operation: impl FnOnce(*mut WpeClipboard) -> T
         } else {
             operation(clipboard)
         }
-    })
+    }
 }
 
 const UTF8_TEXT_FORMAT: &[u8] = b"text/plain;charset=utf-8\0";
 
 #[unsafe(no_mangle)]
-pub extern "C" fn webview_flutter_linux_wpe_clipboard_change_count() -> i64 {
-    with_clipboard(-1, |clipboard| unsafe {
+pub extern "C" fn webview_flutter_linux_wpe_clipboard_change_count(handle: u64) -> i64 {
+    with_clipboard(handle, -1, |clipboard| unsafe {
         wpe_clipboard_get_change_count(clipboard)
     })
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn webview_flutter_linux_wpe_clipboard_text_length() -> isize {
-    with_clipboard(-1, |clipboard| {
+pub extern "C" fn webview_flutter_linux_wpe_clipboard_text_length(handle: u64) -> isize {
+    with_clipboard(handle, -1, |clipboard| {
         let mut length = 0;
         let text = unsafe {
             wpe_clipboard_read_text(clipboard, UTF8_TEXT_FORMAT.as_ptr().cast(), &mut length)
@@ -633,13 +742,14 @@ pub extern "C" fn webview_flutter_linux_wpe_clipboard_text_length() -> isize {
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn webview_flutter_linux_wpe_clipboard_copy_text(
+    handle: u64,
     destination: *mut u8,
     destination_length: usize,
 ) -> i32 {
     if destination.is_null() {
         return -1;
     }
-    with_clipboard(-2, |clipboard| {
+    with_clipboard(handle, -2, |clipboard| {
         let mut length = 0;
         let text = unsafe {
             wpe_clipboard_read_text(clipboard, UTF8_TEXT_FORMAT.as_ptr().cast(), &mut length)
@@ -660,11 +770,14 @@ pub unsafe extern "C" fn webview_flutter_linux_wpe_clipboard_copy_text(
 }
 
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn webview_flutter_linux_wpe_clipboard_set_text(text: *const c_char) -> i32 {
+pub unsafe extern "C" fn webview_flutter_linux_wpe_clipboard_set_text(
+    handle: u64,
+    text: *const c_char,
+) -> i32 {
     if text.is_null() || unsafe { CStr::from_ptr(text) }.to_str().is_err() {
         return -1;
     }
-    with_clipboard(-2, |clipboard| {
+    with_clipboard(handle, -2, |clipboard| {
         let content = unsafe { wpe_clipboard_content_new() };
         if content.is_null() {
             return -3;
@@ -679,36 +792,53 @@ pub unsafe extern "C" fn webview_flutter_linux_wpe_clipboard_set_text(text: *con
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn webview_flutter_linux_wpe_context_menu_generation() -> u64 {
-    CONTEXT_MENU_GENERATION.load(Ordering::Acquire)
+pub extern "C" fn webview_flutter_linux_wpe_context_menu_generation(handle: u64) -> u64 {
+    native_view(handle).map_or(0, |view| {
+        view.metrics.context_menu_generation.load(Ordering::Acquire)
+    })
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn webview_flutter_linux_wpe_context_menu_x() -> f64 {
-    CONTEXT_MENU.with_borrow(|menu| menu.as_ref().map_or(0.0, |menu| menu.x))
+pub extern "C" fn webview_flutter_linux_wpe_context_menu_x(handle: u64) -> f64 {
+    native_view(handle).map_or(0.0, |view| {
+        view.context_menu
+            .borrow()
+            .as_ref()
+            .map_or(0.0, |menu| menu.x)
+    })
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn webview_flutter_linux_wpe_context_menu_y() -> f64 {
-    CONTEXT_MENU.with_borrow(|menu| menu.as_ref().map_or(0.0, |menu| menu.y))
+pub extern "C" fn webview_flutter_linux_wpe_context_menu_y(handle: u64) -> f64 {
+    native_view(handle).map_or(0.0, |view| {
+        view.context_menu
+            .borrow()
+            .as_ref()
+            .map_or(0.0, |menu| menu.y)
+    })
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn webview_flutter_linux_wpe_context_menu_item_count() -> u32 {
-    CONTEXT_MENU.with_borrow(|snapshot| {
-        snapshot
+pub extern "C" fn webview_flutter_linux_wpe_context_menu_item_count(handle: u64) -> u32 {
+    native_view(handle).map_or(0, |view| {
+        view.context_menu
+            .borrow()
             .as_ref()
             .map_or(0, |snapshot| snapshot.items.len() as u32)
     })
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn webview_flutter_linux_wpe_context_menu_item_title_length(index: u32) -> usize {
-    with_context_menu_item(index, 0, |item| item.title.len())
+pub extern "C" fn webview_flutter_linux_wpe_context_menu_item_title_length(
+    handle: u64,
+    index: u32,
+) -> usize {
+    with_context_menu_item(handle, index, 0, |item| item.title.len())
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn webview_flutter_linux_wpe_context_menu_item_copy_title(
+    handle: u64,
     index: u32,
     destination: *mut u8,
     destination_length: usize,
@@ -716,7 +846,7 @@ pub unsafe extern "C" fn webview_flutter_linux_wpe_context_menu_item_copy_title(
     if destination.is_null() {
         return -1;
     }
-    with_context_menu_item(index, -2, |item| {
+    with_context_menu_item(handle, index, -2, |item| {
         if destination_length < item.title.len() {
             return -3;
         }
@@ -728,13 +858,19 @@ pub unsafe extern "C" fn webview_flutter_linux_wpe_context_menu_item_copy_title(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn webview_flutter_linux_wpe_context_menu_item_is_separator(index: u32) -> i32 {
-    with_context_menu_item(index, 0, |item| i32::from(item.is_separator))
+pub extern "C" fn webview_flutter_linux_wpe_context_menu_item_is_separator(
+    handle: u64,
+    index: u32,
+) -> i32 {
+    with_context_menu_item(handle, index, 0, |item| i32::from(item.is_separator))
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn webview_flutter_linux_wpe_context_menu_item_is_enabled(index: u32) -> i32 {
-    with_context_menu_item(index, 0, |item| {
+pub extern "C" fn webview_flutter_linux_wpe_context_menu_item_is_enabled(
+    handle: u64,
+    index: u32,
+) -> i32 {
+    with_context_menu_item(handle, index, 0, |item| {
         if item.action.is_null() {
             0
         } else {
@@ -744,28 +880,30 @@ pub extern "C" fn webview_flutter_linux_wpe_context_menu_item_is_enabled(index: 
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn webview_flutter_linux_wpe_context_menu_activate(index: u32) -> i32 {
-    let status = with_context_menu_item(index, -2, |item| {
+pub extern "C" fn webview_flutter_linux_wpe_context_menu_activate(handle: u64, index: u32) -> i32 {
+    let status = with_context_menu_item(handle, index, -2, |item| {
         if item.action.is_null() || unsafe { g_action_get_enabled(item.action) } == 0 {
             return -3;
         }
         unsafe { g_action_activate(item.action, item.target) };
         0
     });
-    if status == 0 {
-        CONTEXT_MENU.with_borrow_mut(|menu| menu.take());
+    if status == 0
+        && let Some(native_view) = native_view(handle)
+    {
+        native_view.context_menu.take();
     }
     status
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn webview_flutter_linux_wpe_context_menu_dismiss() -> i32 {
-    i32::from(CONTEXT_MENU.with_borrow_mut(|menu| menu.take()).is_none())
+pub extern "C" fn webview_flutter_linux_wpe_context_menu_dismiss(handle: u64) -> i32 {
+    native_view(handle).map_or(-1, |view| i32::from(view.context_menu.take().is_none()))
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn webview_flutter_linux_wpe_pump() -> i32 {
-    if !RUNTIME.with_borrow(|runtime| runtime.is_some()) {
+pub extern "C" fn webview_flutter_linux_wpe_pump(handle: u64) -> i32 {
+    if native_view(handle).is_none() {
         return -1;
     }
     let context = MainContext::default();
@@ -779,13 +917,17 @@ pub extern "C" fn webview_flutter_linux_wpe_pump() -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn webview_flutter_linux_wpe_navigate(url: *const c_char) -> i32 {
+pub extern "C" fn webview_flutter_linux_wpe_navigate(handle: u64, url: *const c_char) -> i32 {
     let url =
         match required_c_string(url).and_then(|url| std::ffi::CString::new(url).map_err(|_| -2)) {
             Ok(url) => url,
             Err(status) => return status,
         };
-    RUNTIME.with_borrow(|runtime| {
+    let Some(native_view) = native_view(handle) else {
+        return -3;
+    };
+    {
+        let runtime = native_view.runtime.borrow();
         let Some(runtime) = runtime.as_ref() else {
             return -3;
         };
@@ -794,15 +936,19 @@ pub extern "C" fn webview_flutter_linux_wpe_navigate(url: *const c_char) -> i32 
         // SAFETY: webview is borrowed from the live runtime; WebKit copies URI.
         unsafe { webkit_web_view_load_uri(webview, url.as_ptr()) };
         0
-    })
+    }
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn webview_flutter_linux_wpe_resize(width: u32, height: u32) -> i32 {
+pub extern "C" fn webview_flutter_linux_wpe_resize(handle: u64, width: u32, height: u32) -> i32 {
     if width == 0 || height == 0 || width > 16_384 || height > 16_384 {
         return -1;
     }
-    RUNTIME.with_borrow(|runtime| {
+    let Some(native_view) = native_view(handle) else {
+        return -3;
+    };
+    {
+        let runtime = native_view.runtime.borrow();
         let Some(runtime) = runtime.as_ref() else {
             return -3;
         };
@@ -813,12 +959,12 @@ pub extern "C" fn webview_flutter_linux_wpe_resize(width: u32, height: u32) -> i
         }
         unsafe { wpe_view_resized(runtime.view, width as i32, height as i32) };
         0
-    })
+    }
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn webview_flutter_linux_wpe_set_focus(focused: i32) -> i32 {
-    with_view(|view| unsafe {
+pub extern "C" fn webview_flutter_linux_wpe_set_focus(handle: u64, focused: i32) -> i32 {
+    with_view(handle, |view| unsafe {
         if focused != 0 {
             wpe_view_focus_in(view);
         } else {
@@ -828,8 +974,10 @@ pub extern "C" fn webview_flutter_linux_wpe_set_focus(focused: i32) -> i32 {
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn webview_flutter_linux_wpe_set_visibility(visible: i32) -> i32 {
-    with_view(|view| unsafe { wpe_view_set_visible(view, i32::from(visible != 0)) })
+pub extern "C" fn webview_flutter_linux_wpe_set_visibility(handle: u64, visible: i32) -> i32 {
+    with_view(handle, |view| unsafe {
+        wpe_view_set_visible(view, i32::from(visible != 0))
+    })
 }
 
 fn wpe_modifiers(modifiers: u32) -> u32 {
@@ -1019,14 +1167,18 @@ fn xkb_keyval(windows_key_code: i32, native_key_code: i32, character: u32) -> u3
     }
 }
 
-fn with_view(operation: impl FnOnce(*mut WpeView)) -> i32 {
-    RUNTIME.with_borrow(|runtime| {
+fn with_view(handle: u64, operation: impl FnOnce(*mut WpeView)) -> i32 {
+    let Some(native_view) = native_view(handle) else {
+        return -3;
+    };
+    {
+        let runtime = native_view.runtime.borrow();
         let Some(runtime) = runtime.as_ref() else {
             return -3;
         };
         operation(runtime.view);
         0
-    })
+    }
 }
 
 unsafe fn dispatch_event(view: *mut WpeView, event: *mut WpeEvent) {
@@ -1041,6 +1193,7 @@ unsafe fn dispatch_event(view: *mut WpeView, event: *mut WpeEvent) {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn webview_flutter_linux_wpe_send_mouse_move(
+    handle: u64,
     x: i32,
     y: i32,
     modifiers: u32,
@@ -1049,7 +1202,7 @@ pub extern "C" fn webview_flutter_linux_wpe_send_mouse_move(
     if mouse_leave != 0 {
         return 0;
     }
-    with_view(|view| {
+    with_view(handle, |view| {
         // SAFETY: event is created for this live view and consumed by event().
         let event = unsafe {
             wpe_event_pointer_move_new(
@@ -1070,6 +1223,7 @@ pub extern "C" fn webview_flutter_linux_wpe_send_mouse_move(
 
 #[unsafe(no_mangle)]
 pub extern "C" fn webview_flutter_linux_wpe_send_mouse_button(
+    handle: u64,
     x: i32,
     y: i32,
     modifiers: u32,
@@ -1080,7 +1234,7 @@ pub extern "C" fn webview_flutter_linux_wpe_send_mouse_button(
     if button > 2 || !(1..=3).contains(&click_count) {
         return -1;
     }
-    with_view(|view| {
+    with_view(handle, |view| {
         let event_type = if mouse_up != 0 {
             WPE_EVENT_POINTER_UP
         } else {
@@ -1105,13 +1259,14 @@ pub extern "C" fn webview_flutter_linux_wpe_send_mouse_button(
 
 #[unsafe(no_mangle)]
 pub extern "C" fn webview_flutter_linux_wpe_send_mouse_wheel(
+    handle: u64,
     x: i32,
     y: i32,
     modifiers: u32,
     delta_x: i32,
     delta_y: i32,
 ) -> i32 {
-    with_view(|view| {
+    with_view(handle, |view| {
         let event = unsafe {
             wpe_event_scroll_new(
                 view,
@@ -1132,6 +1287,7 @@ pub extern "C" fn webview_flutter_linux_wpe_send_mouse_wheel(
 
 #[unsafe(no_mangle)]
 pub extern "C" fn webview_flutter_linux_wpe_send_key(
+    handle: u64,
     event_type: u32,
     modifiers: u32,
     windows_key_code: i32,
@@ -1144,7 +1300,7 @@ pub extern "C" fn webview_flutter_linux_wpe_send_key(
         2 => WPE_EVENT_KEYBOARD_KEY_UP,
         _ => return -1,
     };
-    with_view(|view| {
+    with_view(handle, |view| {
         let event = unsafe {
             wpe_event_keyboard_new(
                 event_type,
@@ -1161,48 +1317,54 @@ pub extern "C" fn webview_flutter_linux_wpe_send_key(
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn webview_flutter_linux_wpe_frame_generation() -> u64 {
-    FRAME_GENERATION.load(Ordering::Acquire)
+pub extern "C" fn webview_flutter_linux_wpe_frame_generation(handle: u64) -> u64 {
+    native_view(handle).map_or(0, |view| {
+        view.metrics.frame_generation.load(Ordering::Acquire)
+    })
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn webview_flutter_linux_wpe_paint_count() -> u64 {
-    PAINT_COUNT.load(Ordering::Acquire)
+pub extern "C" fn webview_flutter_linux_wpe_paint_count(handle: u64) -> u64 {
+    native_view(handle).map_or(0, |view| view.metrics.paint_count.load(Ordering::Acquire))
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn webview_flutter_linux_wpe_valid_paint_count() -> u64 {
-    VALID_PAINT_COUNT.load(Ordering::Acquire)
+pub extern "C" fn webview_flutter_linux_wpe_valid_paint_count(handle: u64) -> u64 {
+    native_view(handle).map_or(0, |view| {
+        view.metrics.valid_paint_count.load(Ordering::Acquire)
+    })
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn webview_flutter_linux_wpe_plane_count() -> u32 {
-    PLANE_COUNT.load(Ordering::Acquire)
+pub extern "C" fn webview_flutter_linux_wpe_plane_count(handle: u64) -> u32 {
+    native_view(handle).map_or(0, |view| view.metrics.plane_count.load(Ordering::Acquire))
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn webview_flutter_linux_wpe_format() -> u32 {
-    FORMAT.load(Ordering::Acquire)
+pub extern "C" fn webview_flutter_linux_wpe_format(handle: u64) -> u32 {
+    native_view(handle).map_or(0, |view| view.metrics.format.load(Ordering::Acquire))
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn webview_flutter_linux_wpe_modifier() -> u64 {
-    MODIFIER.load(Ordering::Acquire)
+pub extern "C" fn webview_flutter_linux_wpe_modifier(handle: u64) -> u64 {
+    native_view(handle).map_or(0, |view| view.metrics.modifier.load(Ordering::Acquire))
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn webview_flutter_linux_wpe_width() -> u32 {
-    WIDTH_PX.load(Ordering::Acquire)
+pub extern "C" fn webview_flutter_linux_wpe_width(handle: u64) -> u32 {
+    native_view(handle).map_or(0, |view| view.metrics.width.load(Ordering::Acquire))
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn webview_flutter_linux_wpe_height() -> u32 {
-    HEIGHT_PX.load(Ordering::Acquire)
+pub extern "C" fn webview_flutter_linux_wpe_height(handle: u64) -> u32 {
+    native_view(handle).map_or(0, |view| view.metrics.height.load(Ordering::Acquire))
 }
 
 #[unsafe(no_mangle)]
-pub extern "C" fn webview_flutter_linux_wpe_first_plane_stride() -> u32 {
-    FIRST_PLANE_STRIDE.load(Ordering::Acquire)
+pub extern "C" fn webview_flutter_linux_wpe_first_plane_stride(handle: u64) -> u32 {
+    native_view(handle).map_or(0, |view| {
+        view.metrics.first_plane_stride.load(Ordering::Acquire)
+    })
 }
 
 #[cfg(test)]

@@ -24,5 +24,15 @@ fn main() {
             .atleast_version("2.52")
             .probe("wpe-webkit-2.0")
             .expect("webview_flutter_linux requires the WPE WebKit 2.52 development package");
+        // WPE WebKit exports the JavaScriptCore GLib API used by the runtime
+        // (for example `jsc_value_to_json`) from libWPEWebKit itself. Requiring
+        // javascriptcoregtk-6.0 here would add an unrelated WebKitGTK package
+        // dependency and reject otherwise complete WPE-only installations.
+        // WPE identifies its web-process accessibility tree through a local
+        // ATK socket. The Rust bridge reads the socket's plug identifier and
+        // follows it over GIO's D-Bus API, without a GTK WebView or C shim.
+        pkg_config::Config::new()
+            .probe("atk")
+            .expect("webview_flutter_linux requires ATK accessibility support");
     }
 }

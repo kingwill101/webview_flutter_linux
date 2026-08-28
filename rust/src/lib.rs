@@ -30,9 +30,11 @@ use std::f32::consts::TAU;
 #[cfg(target_os = "linux")]
 mod linux_texture;
 #[cfg(all(target_os = "linux", feature = "wpe-runtime"))]
+mod system_clipboard;
+#[cfg(all(target_os = "linux", feature = "wpe-runtime"))]
 mod wpe_runtime;
 
-const API_VERSION: u32 = 2;
+const API_VERSION: u32 = 28;
 /// Initial texture width used before WPE supplies its first buffer.
 pub(crate) const WIDTH: usize = 800;
 /// Initial texture height used before WPE supplies its first buffer.

@@ -30,9 +30,11 @@ use std::{
     ffi::{c_char, c_void},
     ptr,
     sync::{
-        Arc, Mutex,
-        atomic::{AtomicI64, AtomicU32, AtomicU64, AtomicUsize, Ordering},
+        Arc, Mutex, OnceLock, Weak,
+        atomic::{AtomicBool, AtomicI64, AtomicU32, AtomicU64, AtomicUsize, Ordering},
+        mpsc::{SyncSender, TrySendError, sync_channel},
     },
+    thread,
     time::Instant,
 };
 
@@ -73,6 +75,17 @@ const GL_SYNC_FLUSH_COMMANDS_BIT: u32 = 0x00000001;
 const GL_TIMEOUT_EXPIRED: u32 = 0x911B;
 const GL_WAIT_FAILED: u32 = 0x911D;
 const GL_NO_ERROR: u32 = 0;
+
+/// Maximum number of distinct texture notifications waiting for the worker.
+///
+/// A view coalesces all of its unpublished frames into one notification, so
+/// this bound limits pathological multi-view pressure rather than ordinary
+/// frame rate. Dropping a notification is safe: the next rendered frame tries
+/// again after the pending flag is cleared.
+const FRAME_NOTIFICATION_QUEUE_CAPACITY: usize = 256;
+
+static FRAME_NOTIFICATION_SENDER: OnceLock<Option<SyncSender<Weak<TextureState>>>> =
+    OnceLock::new();
 
 const EGL_NONE: i32 = 0x3038;
 const EGL_CONFIG_ID: i32 = 0x3028;
@@ -536,13 +549,15 @@ impl Drop for GlState {
 struct TextureProvider {
     state: Mutex<GlState>,
     metrics: Arc<TextureMetrics>,
+    frame_notification_pending: Arc<AtomicBool>,
 }
 
 impl TextureProvider {
-    fn new(metrics: Arc<TextureMetrics>) -> Self {
+    fn new(metrics: Arc<TextureMetrics>, frame_notification_pending: Arc<AtomicBool>) -> Self {
         Self {
             state: Mutex::new(GlState::default()),
             metrics,
+            frame_notification_pending,
         }
     }
 }
@@ -578,11 +593,19 @@ impl PayloadProvider<BoxedGLTexture> for TextureProvider {
             height: self.metrics.height.load(Ordering::Acquire) as i32,
         };
         let Ok(mut state) = self.state.lock() else {
+            self.frame_notification_pending
+                .store(false, Ordering::Release);
             return Box::new(fallback);
         };
         // SAFETY: Irondash invokes this provider on Flutter's raster thread
         // while its GL context is current.
-        Box::new(unsafe { state.populate(&self.metrics) }.unwrap_or(fallback))
+        let snapshot = unsafe { state.populate(&self.metrics) }.unwrap_or(fallback);
+        // Clearing while the provider still owns the GL-state lock prevents a
+        // producer from copying a newer frame, observing the old `true` flag,
+        // and losing the notification for that frame.
+        self.frame_notification_pending
+            .store(false, Ordering::Release);
+        Box::new(snapshot)
     }
 }
 
@@ -596,6 +619,36 @@ pub(crate) struct TextureState {
     metrics: Arc<TextureMetrics>,
     provider: Arc<TextureProvider>,
     texture: Mutex<Option<Arc<SendableTexture<BoxedGLTexture>>>>,
+    frame_notification_pending: Arc<AtomicBool>,
+}
+
+/// Returns the process-wide handoff used to leave a Dart FFI call before
+/// notifying Flutter's Linux texture registrar.
+///
+/// WPE is advanced by a Dart timer through `webview_flutter_linux_wpe_pump`.
+/// Its `buffer-rendered` signal therefore runs *inside* a Dart FFI invocation
+/// on Flutter's platform thread. Calling the Linux texture registrar directly
+/// from that callback may synchronously ask the engine to enter the already
+/// current Dart isolate, which is fatal during hot restart. The worker calls
+/// Irondash from a foreign thread; `SendableTexture` then posts the registrar
+/// operation back to the platform run loop, after the FFI frame has returned.
+fn frame_notification_sender() -> Option<&'static SyncSender<Weak<TextureState>>> {
+    FRAME_NOTIFICATION_SENDER
+        .get_or_init(|| {
+            let (sender, receiver) =
+                sync_channel::<Weak<TextureState>>(FRAME_NOTIFICATION_QUEUE_CAPACITY);
+            let worker = thread::Builder::new()
+                .name("webview-linux-texture-notify".to_owned())
+                .spawn(move || {
+                    while let Ok(texture) = receiver.recv() {
+                        if let Some(texture) = texture.upgrade() {
+                            texture.notify_flutter_from_worker();
+                        }
+                    }
+                });
+            worker.ok().map(|_| sender)
+        })
+        .as_ref()
 }
 
 impl TextureState {
@@ -606,7 +659,11 @@ impl TextureState {
     /// when the engine returns a non-positive texture identifier.
     pub(crate) fn new(engine_handle: i64) -> Result<Arc<Self>, i32> {
         let metrics = Arc::new(TextureMetrics::default());
-        let provider = Arc::new(TextureProvider::new(metrics.clone()));
+        let frame_notification_pending = Arc::new(AtomicBool::new(false));
+        let provider = Arc::new(TextureProvider::new(
+            metrics.clone(),
+            frame_notification_pending.clone(),
+        ));
         let texture =
             Texture::new_with_provider(engine_handle, provider.clone()).map_err(|_| -3)?;
         let id = texture.id();
@@ -615,12 +672,16 @@ impl TextureState {
         }
         let texture = texture.into_sendable_texture();
         metrics.id.store(id, Ordering::Release);
-        texture.mark_frame_available();
-        Ok(Arc::new(Self {
+        let state = Arc::new(Self {
             metrics,
             provider,
             texture: Mutex::new(Some(texture)),
-        }))
+            frame_notification_pending,
+        });
+        if state.mark_frame_available() != 0 {
+            return Err(-5);
+        }
+        Ok(state)
     }
 
     /// Returns Flutter's texture identifier, or zero after shutdown.
@@ -675,6 +736,8 @@ impl TextureState {
             return -2;
         };
         texture.take();
+        self.frame_notification_pending
+            .store(false, Ordering::Release);
         self.metrics.id.store(0, Ordering::Release);
         self.metrics.gl_name.store(0, Ordering::Release);
         self.metrics.egl_display.store(0, Ordering::Release);
@@ -686,19 +749,66 @@ impl TextureState {
         0
     }
 
-    /// Tells Flutter that the texture has a newer payload to sample.
+    /// Schedules Flutter to sample the newest texture payload.
     ///
-    /// Returns `-1` after shutdown and `-2` if the texture mutex is poisoned.
-    pub(crate) fn mark_frame_available(&self) -> i32 {
+    /// Calls are coalesced until Flutter's raster callback consumes the current
+    /// payload. The registrar call is deliberately handed to a worker first so
+    /// it cannot execute synchronously inside the Dart FFI frame that pumps
+    /// WPE. Returns `-1` after shutdown, `-2` for a poisoned texture mutex,
+    /// `-3` when the worker is unavailable, or `-4` when its bounded queue is
+    /// full or disconnected.
+    pub(crate) fn mark_frame_available(self: &Arc<Self>) -> i32 {
+        {
+            let texture = match self.texture.lock() {
+                Ok(texture) => texture,
+                Err(_) => return -2,
+            };
+            if texture.is_none() {
+                return -1;
+            }
+        }
+        if self
+            .frame_notification_pending
+            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+            .is_err()
+        {
+            return 0;
+        }
+        let Some(sender) = frame_notification_sender() else {
+            self.frame_notification_pending
+                .store(false, Ordering::Release);
+            return -3;
+        };
+        match sender.try_send(Arc::downgrade(self)) {
+            Ok(()) => 0,
+            Err(TrySendError::Full(_) | TrySendError::Disconnected(_)) => {
+                self.frame_notification_pending
+                    .store(false, Ordering::Release);
+                -4
+            }
+        }
+    }
+
+    /// Runs only on the notification worker, never inside a Dart FFI call.
+    ///
+    /// Irondash detects that this is not Flutter's platform thread and posts
+    /// the actual registrar call to its run loop. A concurrent shutdown turns
+    /// the texture option into `None`, making a queued notification harmless.
+    fn notify_flutter_from_worker(&self) {
         let texture = match self.texture.lock() {
             Ok(texture) => texture.clone(),
-            Err(_) => return -2,
+            Err(_) => {
+                self.frame_notification_pending
+                    .store(false, Ordering::Release);
+                return;
+            }
         };
         let Some(texture) = texture else {
-            return -1;
+            self.frame_notification_pending
+                .store(false, Ordering::Release);
+            return;
         };
         texture.mark_frame_available();
-        0
     }
 
     /// Imports and copies one borrowed WPE DMA-BUF into the next ring slot.

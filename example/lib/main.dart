@@ -17,6 +17,7 @@ import 'package:webview_flutter_linux/webview_flutter_linux.dart';
 
 import 'debug_display_metrics_probe.dart';
 import 'debug_text_zoom_probe.dart';
+import 'https_fallback.dart';
 
 void main() {
   final isFlutterTest = Platform.environment.containsKey('FLUTTER_TEST');
@@ -721,6 +722,7 @@ class _BrowserPageState extends State<BrowserPage> {
   String _preAttachmentJavaScriptStatus = 'pending';
   bool _preAttachmentJavaScriptComplete = !kDebugMode;
   bool _recoveringWebProcess = false;
+  bool _showingHttpFallbackPrompt = false;
   bool _canGoBack = false;
   bool _geolocationProbeEnabled = false;
   bool _showPrimaryWebView = true;
@@ -815,6 +817,12 @@ class _BrowserPageState extends State<BrowserPage> {
               },
               onUrlChange: (change) {
                 if (!mounted) return;
+                if (change.url case final url?) {
+                  _addressController.value = TextEditingValue(
+                    text: url,
+                    selection: TextSelection.collapsed(offset: url.length),
+                  );
+                }
                 setState(() => _currentUrl = change.url);
               },
               onHttpError: (error) {
@@ -876,27 +884,42 @@ class _BrowserPageState extends State<BrowserPage> {
                 final isLocalProbe =
                     (uri?.host == '127.0.0.1' || uri?.host == 'localhost') &&
                     uri?.port == 9443;
-                final decision = isLocalProbe
-                    ? error.proceed()
-                    : error.cancel();
-                unawaited(
-                  decision.catchError((Object exception, StackTrace _) {
-                    if (mounted) {
-                      setState(
-                        () => _sslAuthError = 'resolution failed: $exception',
-                      );
-                    }
-                  }),
-                );
                 if (mounted) {
+                  if (uri != null) {
+                    final failedUrl = uri.toString();
+                    _addressController.value = TextEditingValue(
+                      text: failedUrl,
+                      selection: TextSelection.collapsed(
+                        offset: failedUrl.length,
+                      ),
+                    );
+                  }
                   setState(
                     () => _sslAuthError =
                         '${linuxError?.url ?? 'unknown URL'} · '
                         '${linuxError?.description ?? 'certificate failure'} · '
                         '${error.certificate?.data?.length ?? 0} DER bytes · '
-                        '${isLocalProbe ? 'proceeding' : 'cancelled'}',
+                        '${isLocalProbe ? 'proceeding' : 'HTTPS blocked'}',
                   );
                 }
+                if (isLocalProbe) {
+                  unawaited(
+                    error.proceed().catchError((
+                      Object exception,
+                      StackTrace _,
+                    ) {
+                      if (mounted) {
+                        setState(
+                          () => _sslAuthError = 'resolution failed: $exception',
+                        );
+                      }
+                    }),
+                  );
+                  return;
+                }
+                unawaited(
+                  _handleRemoteTlsFailure(error: error, failedUri: uri),
+                );
               },
             ),
           )
@@ -1085,6 +1108,86 @@ class _BrowserPageState extends State<BrowserPage> {
     if (uri == null || !uri.hasScheme) return;
     setState(() => _navigationError = null);
     await _primaryController.loadRequest(uri);
+  }
+
+  /// Cancels a failed HTTPS load and optionally starts a separate HTTP load.
+  ///
+  /// The fallback is deliberately implemented in the example's browser UI,
+  /// rather than in the plugin. A WebView embedding should control its own
+  /// security policy, wording, and whether an HTTP fallback is offered at all.
+  Future<void> _handleRemoteTlsFailure({
+    required SslAuthError error,
+    required Uri? failedUri,
+  }) async {
+    final fallbackUri = failedUri == null
+        ? null
+        : httpFallbackUriForTlsFailure(failedUri);
+
+    // Resolve WebKit's certificate challenge before presenting Flutter UI.
+    // Loading the HTTP URL later is a new navigation, not permission to ignore
+    // the invalid certificate on the original HTTPS connection.
+    try {
+      await error.cancel();
+    } catch (exception) {
+      if (mounted) {
+        setState(() => _sslAuthError = 'resolution failed: $exception');
+      }
+      return;
+    }
+
+    if (!mounted || fallbackUri == null || _showingHttpFallbackPrompt) {
+      return;
+    }
+
+    _showingHttpFallbackPrompt = true;
+    try {
+      final continueOverHttp = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (dialogContext) => AlertDialog(
+          key: const ValueKey('https-fallback-dialog'),
+          icon: const Icon(Icons.lock_outline),
+          title: const Text('Secure site not available'),
+          content: Text(
+            'A secure connection to ${failedUri!.host} failed. You can go '
+            'back, or try ${fallbackUri.toString()} over unencrypted HTTP. '
+            'Do not enter passwords or other sensitive information if you '
+            'continue.',
+          ),
+          actions: <Widget>[
+            TextButton(
+              key: const ValueKey('https-fallback-go-back'),
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('Go back'),
+            ),
+            FilledButton(
+              key: const ValueKey('https-fallback-continue'),
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('Continue to HTTP site'),
+            ),
+          ],
+        ),
+      );
+
+      if (!mounted || continueOverHttp != true) return;
+
+      _addressController.text = fallbackUri.toString();
+      setState(() {
+        _navigationError = null;
+        _sslAuthError =
+            '${failedUri.toString()} · HTTPS blocked · continuing with '
+            '${fallbackUri.toString()}; redirects will follow normally';
+      });
+      try {
+        await _primaryController.loadRequest(fallbackUri);
+      } catch (exception) {
+        if (mounted) {
+          setState(() => _navigationError = 'HTTP fallback failed: $exception');
+        }
+      }
+    } finally {
+      _showingHttpFallbackPrompt = false;
+    }
   }
 
   Future<void> _clearWebsiteDataBeforeAttachment() async {
@@ -1427,6 +1530,7 @@ class _BrowserPageState extends State<BrowserPage> {
                 ),
                 Expanded(
                   child: TextField(
+                    key: const ValueKey('address-field'),
                     controller: _addressController,
                     decoration: const InputDecoration(
                       labelText: 'Address',

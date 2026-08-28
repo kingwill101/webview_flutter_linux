@@ -6,7 +6,7 @@ on:
       tag:
         description: GitHub release tag declared in native_prebuilt.yaml
         required: true
-        default: webview_flutter_linux-v0.1.0-dev.1
+        default: webview_flutter_linux-v0.1.0-dev.2
         type: string
 
 permissions:
@@ -60,9 +60,10 @@ jobs:
             exit 1
           fi
           pkg-config --atleast-version=2.52 wpe-webkit-2.0
+          pkg-config --atleast-version=2.52 wpe-platform-2.0
           flutter --version
           rustup --version
-          pkg-config --modversion wpe-webkit-2.0 glib-2.0 gio-2.0
+          pkg-config --modversion wpe-webkit-2.0 wpe-platform-2.0 glib-2.0 gio-2.0
 
       - name: Resolve Dart dependencies
         run: flutter pub get

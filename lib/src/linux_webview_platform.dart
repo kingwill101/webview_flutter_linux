@@ -11,9 +11,10 @@ import 'linux_webview_widget.dart';
 
 /// WPE WebKit implementation of the `webview_flutter` platform interface.
 ///
-/// Controllers remain lightweight until their corresponding widget is mounted.
-/// Mounting creates a native WPE view and connects its rendered frames to a
-/// Flutter texture.
+/// Controllers create their native WPE view lazily when either a native-backed
+/// API or a presenting widget first needs it. Widgets lease the controller's
+/// renderer and connect its frames to a Flutter texture without owning the
+/// browser lifetime.
 class WebViewFlutterLinux extends WebViewPlatform {
   /// Installs [WebViewFlutterLinux] as the active platform implementation.
   ///
@@ -23,7 +24,7 @@ class WebViewFlutterLinux extends WebViewPlatform {
     WebViewPlatform.instance = WebViewFlutterLinux();
   }
 
-  /// Creates a lazily attached Linux WebView controller.
+  /// Creates a controller whose native WebView is allocated on first use.
   @override
   LinuxWebViewController createPlatformWebViewController(
     PlatformWebViewControllerCreationParams params,
@@ -41,7 +42,7 @@ class WebViewFlutterLinux extends WebViewPlatform {
     PlatformWebViewWidgetCreationParams params,
   ) => LinuxWebViewWidget(params);
 
-  /// Creates the placeholder Linux cookie-manager delegate.
+  /// Creates the application-wide WPE cookie-manager delegate.
   @override
   LinuxWebViewCookieManager createPlatformCookieManager(
     PlatformWebViewCookieManagerCreationParams params,

@@ -6,9 +6,9 @@ import 'package:webview_flutter_platform_interface/webview_flutter_platform_inte
 
 /// Stores navigation callbacks used by the Linux WebView implementation.
 ///
-/// The controller currently reports navigation requests, URL changes, page
-/// starts, progress, and page completion. The remaining callbacks are retained
-/// here so native WPE events can be connected without changing the public
+/// The controller reports controller-request decisions and native WebKit URL,
+/// lifecycle, and progress events. The remaining callbacks are retained here
+/// so error and authentication events can be added without changing the public
 /// platform-delegate contract.
 class LinuxNavigationDelegate extends PlatformNavigationDelegate {
   /// Creates a delegate for the supplied platform-interface parameters.
@@ -19,28 +19,28 @@ class LinuxNavigationDelegate extends PlatformNavigationDelegate {
   /// Invoked before a controller-initiated main-frame navigation.
   NavigationRequestCallback? onNavigationRequest;
 
-  /// Invoked when a controller-initiated navigation starts.
+  /// Invoked when WebKit starts a main-frame navigation.
   PageEventCallback? onPageStarted;
 
-  /// Invoked after the first painted frame for a requested URL.
+  /// Invoked when WebKit finishes loading the main frame and its resources.
   PageEventCallback? onPageFinished;
 
-  /// Receives HTTP response failures once native event forwarding supports it.
+  /// Receives WebKit responses with HTTP status codes from 400 through 599.
   HttpResponseErrorCallback? onHttpError;
 
-  /// Receives the synthetic start and completion progress values.
+  /// Receives WebKit's estimated load progress values.
   ProgressCallback? onProgress;
 
-  /// Receives resource failures once native event forwarding supports it.
+  /// Receives main-document and subordinate-resource failures from WebKit.
   WebResourceErrorCallback? onWebResourceError;
 
-  /// Invoked when the controller changes its current URL.
+  /// Invoked when WebKit reports a different main-frame URL.
   UrlChangeCallback? onUrlChange;
 
-  /// Receives authentication challenges once the native bridge supports them.
+  /// Receives HTTP authentication challenges retained by WPE.
   HttpAuthRequestCallback? onHttpAuthRequest;
 
-  /// Receives TLS certificate failures once the native bridge supports them.
+  /// Receives TLS certificate failures retained by WPE.
   SslAuthErrorCallback? onSslAuthError;
 
   @override

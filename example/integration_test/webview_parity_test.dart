@@ -2150,6 +2150,32 @@ Future<void> main() async {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
+  testWidgets('mouse wheel scrolls in content direction', (tester) async {
+    final pageFinished = Completer<void>();
+    final controller = _controllerForTest(tester);
+    await controller.setJavaScriptMode(JavaScriptMode.unrestricted);
+    await controller.setNavigationDelegate(
+      NavigationDelegate(onPageFinished: (_) => pageFinished.complete()),
+    );
+    await controller.loadRequest(Uri.parse('$origin/scroll'));
+
+    await tester.pumpWidget(_ParityHarness(controller: controller));
+    await pageFinished.future.timeout(const Duration(seconds: 10));
+    await tester.pump(const Duration(milliseconds: 200));
+    final webView = find.byType(WebViewWidget);
+    final center = tester.getCenter(webView);
+
+    await tester.sendEventToBinding(
+      PointerScrollEvent(
+        position: center,
+        scrollDelta: const Offset(0, 53),
+        kind: PointerDeviceKind.mouse,
+      ),
+    );
+    await _waitForJavaScriptTrue(controller, 'window.scrollY > 0');
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   testWidgets('touchpad gestures scroll in content direction', (tester) async {
     final pageFinished = Completer<void>();
     final controller = _controllerForTest(tester);

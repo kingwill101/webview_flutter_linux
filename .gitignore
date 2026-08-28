@@ -53,3 +53,6 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# Generated local duplication-analysis cache
+/.deslop/cache/

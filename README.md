@@ -38,7 +38,48 @@ class BrowserView extends StatelessWidget {
 
 See [`example/lib/main.dart`](example/lib/main.dart) for a complete example.
 
-The host must provide WPE WebKit 2.52 or newer and its runtime dependencies.
+## Linux runtime requirements
+
+The native asset contains the Rust bridge, but it does not bundle a browser
+engine. The target system must provide WPE WebKit 2.52 or newer, built with WPE
+Platform support. Install the distribution package that provides
+`libWPEWebKit-2.0.so.1`; its dependency resolver should also install the WPE
+backend and the libraries used directly by the bridge:
+
+- libepoxy (`libepoxy.so.0`)
+- libsoup 3 (`libsoup-3.0.so.0`)
+- GLib, GObject, and GIO
+- ATK accessibility support (`libatk-1.0.so.0`)
+
+For example:
+
+```sh
+# Arch Linux
+sudo pacman -S wpewebkit
+
+# Debian testing/unstable, when the repository provides WPE WebKit 2.52+
+sudo apt install libwpewebkit-2.0-1
+
+# Fedora, from a repository that provides WPE WebKit 2.52+
+sudo dnf install wpewebkit
+```
+
+Older distribution releases may only provide an incompatible WPE WebKit
+version. Confirm that both `wpe-webkit-2.0` and `wpe-platform-2.0` report 2.52
+or newer when their pkg-config files are installed:
+
+```sh
+pkg-config --modversion wpe-webkit-2.0 wpe-platform-2.0
+```
+
+Git and path dependencies compile the Rust bridge locally and additionally
+require the development packages for WPE WebKit, libepoxy, and ATK, plus
+`pkg-config`. Published package releases use the prebuilt bridge and require
+only the runtime libraries.
+
+Audio and video format support comes from the host's GStreamer plugins. Install
+the appropriate base, good, bad, ugly, and libav plugin packages for the media
+formats the application needs.
 
 ## License
 

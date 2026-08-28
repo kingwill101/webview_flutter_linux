@@ -62,7 +62,7 @@ jobs:
           git config --global --add safe.directory "$FLUTTER_ROOT"
           flutter config --enable-linux-desktop --no-analytics
           rustup default stable
-          rustup component add clippy rustfmt
+          (cd rust && rustup component add clippy rustfmt)
           pkg-config --atleast-version=2.52 wpe-webkit-2.0
           pkg-config --atleast-version=2.52 wpe-platform-2.0
           flutter --version

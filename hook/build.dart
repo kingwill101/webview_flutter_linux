@@ -21,21 +21,43 @@ void main(List<String> arguments) async {
   await build(arguments, (input, output) async {
     if (!input.config.buildCodeAssets) return;
 
+    final rustDirectory = Directory.fromUri(input.packageRoot.resolve('rust/'));
     output.dependencies.addAll([
       input.packageRoot.resolve('native_prebuilt.yaml'),
       input.packageRoot.resolve('rust/build.rs'),
       input.packageRoot.resolve('rust/Cargo.toml'),
       input.packageRoot.resolve('rust/Cargo.lock'),
+      input.packageRoot.resolve('rust/rust-toolchain.toml'),
+      ...rustDirectory
+          .listSync(recursive: true, followLinks: false)
+          .whereType<File>()
+          .where((file) => file.path.endsWith('.rs'))
+          .map((file) => file.uri),
     ]);
 
     final localWpeSdkDirectory = Directory.fromUri(
       input.packageRoot.resolve('third_party/wpe-sdk/usr/'),
     );
 
-    final project = detect(Directory.fromUri(input.packageRoot));
+    var project = detect(Directory.fromUri(input.packageRoot));
     if (project == null) {
       throw StateError(
         'Could not load native_prebuilt.yaml from ${input.packageRoot}.',
+      );
+    }
+    // Published applications prefer the verified release artifact. A Git
+    // checkout must compile its local Rust tree, otherwise an edited package
+    // can silently keep running the previous release binary. Source archives
+    // without Git metadata can opt into the same behavior explicitly.
+    final checkoutMarker = input.packageRoot.resolve('.git').toFilePath();
+    final isGitCheckout =
+        FileSystemEntity.typeSync(checkoutMarker, followLinks: false) !=
+        FileSystemEntityType.notFound;
+    if (isGitCheckout ||
+        Platform.environment['WEBVIEW_FLUTTER_LINUX_FORCE_SOURCE_BUILD'] ==
+            '1') {
+      project = project.copyWith(
+        prebuiltPolicy: PrebuiltPolicy.forceSourceBuild,
       );
     }
 

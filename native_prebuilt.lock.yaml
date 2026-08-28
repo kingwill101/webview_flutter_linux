@@ -1,9 +1,0 @@
-# GENERATED CODE - DO NOT MODIFY BY HAND.
-schema: 1
-release:
-  tag: 'webview_flutter_linux-v0.1.0-dev.1'
-artifacts:
-  'linux-x64':
-    archive_sha256: '1df901e44eb42c5b3fac693188433b8556d741cb7b3bcfbe0f99bccebd1f9bca'
-    payload_sha256: 'e292b0dfa1ec7dd7f2e1dc6ed6025acf4f7f70312e649a484d9115c8aaac974f'
-

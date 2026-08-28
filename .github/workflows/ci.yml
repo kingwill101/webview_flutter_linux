@@ -1,0 +1,108 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  linux:
+    name: Dart, Rust, and real WPE
+    runs-on: ubuntu-24.04
+    container:
+      image: archlinux:base-devel
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: Install Linux dependencies
+        shell: bash
+        run: |
+          pacman -Syu --noconfirm --needed \
+            clang \
+            cmake \
+            curl \
+            dbus \
+            git \
+            gst-plugins-base \
+            gst-plugins-good \
+            gtk3 \
+            libepoxy \
+            mesa \
+            ninja \
+            pkgconf \
+            rustup \
+            unzip \
+            which \
+            wpewebkit \
+            xorg-server-xvfb \
+            xorg-xauth \
+            xz
+
+      - name: Install Flutter
+        uses: subosito/flutter-action@1a449444c387b1966244ae4d4f8c696479add0b2 # v2
+        with:
+          channel: stable
+          flutter-version: 3.47.1
+
+      - name: Configure toolchains
+        shell: bash
+        run: |
+          git config --global --add safe.directory "$FLUTTER_ROOT"
+          flutter config --enable-linux-desktop --no-analytics
+          rustup default stable
+          rustup component add clippy rustfmt
+          pkg-config --atleast-version=2.52 wpe-webkit-2.0
+          flutter --version
+          rustc --version
+          pkg-config --modversion wpe-webkit-2.0
+
+      - name: Validate Dart package
+        shell: bash
+        run: |
+          flutter pub get
+          flutter analyze --fatal-infos
+          flutter test
+
+      - name: Validate Rust runtime
+        working-directory: rust
+        shell: bash
+        run: |
+          cargo fmt --check
+          cargo test --features wpe-runtime
+          cargo clippy --features wpe-runtime --all-targets -- -D warnings
+
+      - name: Validate example
+        working-directory: example
+        shell: bash
+        run: |
+          flutter pub get
+          flutter analyze --fatal-infos
+
+      - name: Exercise real WPE runtime
+        working-directory: example
+        shell: bash
+        timeout-minutes: 10
+        env:
+          GDK_BACKEND: x11
+          LIBGL_ALWAYS_SOFTWARE: "1"
+          WEBKIT_SKIA_ENABLE_CPU_RENDERING: "1"
+          WEBVIEW_FLUTTER_LINUX_FORCE_SOURCE_BUILD: "1"
+          # The job container runs as root, which WebKit's process sandbox
+          # intentionally rejects. The hosted runner itself remains isolated.
+          WEBKIT_DISABLE_SANDBOX_THIS_IS_DANGEROUS: "1"
+        run: |
+          dbus-run-session -- \
+            xvfb-run -a -s "-screen 0 1920x1080x24" \
+            flutter test integration_test/webview_parity_test.dart -d linux \
+              --timeout 2m

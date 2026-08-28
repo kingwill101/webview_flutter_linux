@@ -346,6 +346,21 @@ pub(super) fn should_enqueue_main_frame_lifecycle(
     }
 }
 
+/// Identifies a server redirect belonging to the provisional main-frame load.
+///
+/// A redirect stays in the frame that initiated its request. Before the main
+/// document commits, subordinate documents cannot yet be created by that new
+/// document, so a redirect reported in this interval belongs to the main
+/// frame. Resolving it from the UI-process policy object avoids a synchronous
+/// message to a content process that WebKit may be replacing for a cross-site
+/// destination.
+pub(super) fn is_provisional_main_frame_redirect(
+    is_redirect: bool,
+    main_frame_load_provisional: bool,
+) -> bool {
+    is_redirect && main_frame_load_provisional
+}
+
 /// Connects WebKit's real main-frame lifecycle and progress signals.
 ///
 /// The `load-changed` argument is a foreign GEnum, so the callback reads it
@@ -369,10 +384,17 @@ pub(super) fn connect_navigation_events(webview: &glib::Object, native_view: Wea
             3 => (NAVIGATION_EVENT_FINISHED, 100),
             _ => return None,
         };
-        if let Some(native_view) = load_view.upgrade()
-            && !should_enqueue_main_frame_lifecycle(kind, &native_view.main_frame_load_failed)
-        {
-            return None;
+        if let Some(native_view) = load_view.upgrade() {
+            match kind {
+                NAVIGATION_EVENT_STARTED => native_view.main_frame_load_provisional.set(true),
+                NAVIGATION_EVENT_COMMITTED | NAVIGATION_EVENT_FINISHED => {
+                    native_view.main_frame_load_provisional.set(false);
+                }
+                _ => {}
+            }
+            if !should_enqueue_main_frame_lifecycle(kind, &native_view.main_frame_load_failed) {
+                return None;
+            }
         }
         if kind == NAVIGATION_EVENT_STARTED {
             let webview = raw_webview as *mut WebKitWebView;
@@ -474,6 +496,7 @@ pub(super) fn connect_navigation_events(webview: &glib::Object, native_view: Wea
         let Some(native_view) = failed_view.upgrade() else {
             return Some(false.to_value());
         };
+        native_view.main_frame_load_provisional.set(false);
         native_view.main_frame_load_failed.set(true);
         let failing_uri = unsafe {
             glib::gobject_ffi::g_value_get_string(
@@ -507,6 +530,7 @@ pub(super) fn connect_navigation_events(webview: &glib::Object, native_view: Wea
             )
         };
         let native_view = terminated_view.upgrade()?;
+        native_view.main_frame_load_provisional.set(false);
         native_view.main_frame_load_failed.set(true);
         // Nothing retained from the exited content process may be resolved by
         // Dart after this point. The WebView itself remains alive and can
@@ -661,6 +685,22 @@ pub(super) fn connect_navigation_events(webview: &glib::Object, native_view: Wea
         } else {
             unsafe { CStr::from_ptr(uri) }.to_bytes().to_vec()
         };
+        if is_provisional_main_frame_redirect(
+            unsafe { webkit_navigation_action_is_redirect(navigation_action) } != 0,
+            native_view.main_frame_load_provisional.get(),
+        ) {
+            let decision: glib::Object = unsafe { glib::translate::from_glib_none(decision) };
+            native_view
+                .navigation_policy_requests
+                .borrow_mut()
+                .push_back(NavigationPolicyRequestSnapshot {
+                    id: next_navigation_policy_request_id(&native_view),
+                    url,
+                    is_main_frame: true,
+                    backend: NavigationPolicyBackend::UiNavigation(decision),
+                });
+            return Some(true.to_value());
+        }
         let Some(is_main_frame) = take_navigation_frame_hint(&native_view, &url) else {
             // WPE's UI action omits target FrameInfo. Network requests use a
             // one-shot web-process gate before dispatch; local resources use

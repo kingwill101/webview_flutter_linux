@@ -111,6 +111,13 @@ pub(super) struct NativeView {
     /// flag suppresses that terminal lifecycle notification so Dart does not
     /// report a failed navigation as `onPageFinished`.
     pub(super) main_frame_load_failed: Cell<bool>,
+    /// Whether WebKit is fetching a main-frame document before commit.
+    ///
+    /// Server redirects emitted during this interval remain main-frame
+    /// navigations. Remembering the provisional interval lets the UI process
+    /// classify those redirects without synchronously consulting the content
+    /// process that WebKit may replace for a cross-site destination.
+    pub(super) main_frame_load_provisional: Cell<bool>,
     pub(super) accessibility: RefCell<AccessibilitySnapshot>,
     pub(super) approved_navigation_count: RefCell<u32>,
     pub(super) next_policy_request_id: RefCell<u64>,
@@ -229,6 +236,7 @@ pub(super) fn new_native_view(engine_handle: i64) -> Result<Rc<NativeView>, i32>
         fullscreen_events: RefCell::new(VecDeque::new()),
         fullscreen: AtomicBool::new(false),
         main_frame_load_failed: Cell::new(false),
+        main_frame_load_provisional: Cell::new(false),
         accessibility: RefCell::new(AccessibilitySnapshot::default()),
         // WebKit may emit one policy action for its implicit about:blank before
         // the first real URI. The first non-blank load-start removes any unused

@@ -834,6 +834,7 @@ unsafe extern "C" {
     pub(super) fn webkit_navigation_action_get_request(
         action: *mut WebKitNavigationAction,
     ) -> *mut WebKitURIRequest;
+    pub(super) fn webkit_navigation_action_is_redirect(action: *mut WebKitNavigationAction) -> i32;
     pub(super) fn webkit_policy_decision_use(decision: *mut WebKitPolicyDecision);
     pub(super) fn webkit_policy_decision_use_with_policies(
         decision: *mut WebKitPolicyDecision,

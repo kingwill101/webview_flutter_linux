@@ -172,6 +172,23 @@ Future<void> main() async {
         await request.response.close();
         return;
       }
+      if (request.uri.path == '/main-frame-redirect') {
+        request.response
+          ..statusCode = HttpStatus.found
+          ..headers.set(HttpHeaders.locationHeader, '/secondary');
+        await request.response.close();
+        return;
+      }
+      if (request.uri.path == '/main-frame-cross-site-redirect') {
+        request.response
+          ..statusCode = HttpStatus.found
+          ..headers.set(
+            HttpHeaders.locationHeader,
+            'http://localhost:${server.port}/secondary',
+          );
+        await request.response.close();
+        return;
+      }
       if (request.uri.path == '/accessibility') {
         request.response.headers.contentType = ContentType.html;
         request.response.write(r'''<!doctype html>
@@ -236,6 +253,7 @@ Future<void> main() async {
   final origin = 'http://${server.address.address}:${server.port}';
   final primaryUrl = '$origin/primary';
   final secondaryUrl = '$origin/secondary';
+  final crossSiteSecondaryUrl = 'http://localhost:${server.port}/secondary';
   final headersUrl = '$origin/headers';
   final httpErrorUrl = '$origin/http-error';
   final basicAuthUrl = '$origin/http-basic-authentication';
@@ -938,6 +956,84 @@ Future<void> main() async {
     await historyUrlChanged.future.timeout(const Duration(seconds: 10));
 
     expect(await controller.currentUrl(), secondaryUrl);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('main-frame redirects finish and allow the next host load', (
+    tester,
+  ) async {
+    var pageFinished = Completer<String>();
+    final requestedUrls = <String>[];
+    final controller = _controllerForTest(tester);
+    await controller.setNavigationDelegate(
+      NavigationDelegate(
+        onNavigationRequest: (request) {
+          if (request.isMainFrame) requestedUrls.add(request.url);
+          return NavigationDecision.navigate;
+        },
+        onPageFinished: (url) {
+          if (!pageFinished.isCompleted) pageFinished.complete(url);
+        },
+      ),
+    );
+
+    await tester.pumpWidget(_ParityHarness(controller: controller));
+    await controller.loadRequest(Uri.parse('$origin/main-frame-redirect'));
+    expect(
+      await pageFinished.future.timeout(const Duration(seconds: 10)),
+      secondaryUrl,
+    );
+    expect(await controller.currentUrl(), secondaryUrl);
+
+    pageFinished = Completer<String>();
+    await controller.loadRequest(Uri.parse(primaryUrl));
+    expect(
+      await pageFinished.future.timeout(const Duration(seconds: 10)),
+      primaryUrl,
+    );
+    expect(await controller.currentUrl(), primaryUrl);
+    expect(
+      requestedUrls,
+      containsAllInOrder(<String>[
+        '$origin/main-frame-redirect',
+        secondaryUrl,
+        primaryUrl,
+      ]),
+    );
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('cross-site main-frame redirects finish in the new process', (
+    tester,
+  ) async {
+    final pageFinished = Completer<String>();
+    final mainFrameRequests = <String>[];
+    final controller = _controllerForTest(tester);
+    await controller.setNavigationDelegate(
+      NavigationDelegate(
+        onNavigationRequest: (request) {
+          if (request.isMainFrame) mainFrameRequests.add(request.url);
+          return NavigationDecision.navigate;
+        },
+        onPageFinished: (url) {
+          if (!pageFinished.isCompleted) pageFinished.complete(url);
+        },
+      ),
+    );
+
+    await tester.pumpWidget(_ParityHarness(controller: controller));
+    final redirectUrl = '$origin/main-frame-cross-site-redirect';
+    await controller.loadRequest(Uri.parse(redirectUrl));
+
+    expect(
+      await pageFinished.future.timeout(const Duration(seconds: 10)),
+      crossSiteSecondaryUrl,
+    );
+    expect(await controller.currentUrl(), crossSiteSecondaryUrl);
+    expect(
+      mainFrameRequests,
+      containsAllInOrder(<String>[redirectUrl, crossSiteSecondaryUrl]),
+    );
     await tester.pumpWidget(const SizedBox.shrink());
   });
 

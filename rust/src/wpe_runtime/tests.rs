@@ -292,6 +292,13 @@ fn suppresses_finished_once_after_a_main_frame_failure() {
 }
 
 #[test]
+fn classifies_only_redirects_during_a_provisional_main_frame_load() {
+    assert!(navigation::is_provisional_main_frame_redirect(true, true));
+    assert!(!navigation::is_provisional_main_frame_redirect(false, true));
+    assert!(!navigation::is_provisional_main_frame_redirect(true, false));
+}
+
+#[test]
 fn bounds_the_navigation_queue() {
     let mut events = VecDeque::new();
     for index in 0..=MAX_NAVIGATION_EVENTS {

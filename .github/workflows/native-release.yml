@@ -36,6 +36,7 @@ jobs:
           pacman -Syu --noconfirm --needed \
             curl \
             git \
+            gtk3 \
             jq \
             libepoxy \
             pkgconf \

@@ -753,7 +753,6 @@ class _BrowserPageState extends State<BrowserPage> {
           ..setVerticalScrollBarEnabled(false)
           ..setHorizontalScrollBarEnabled(false)
           ..setOverScrollMode(WebViewOverScrollMode.never)
-          ..setUserAgent('webview_flutter_linux_example/1.0')
           ..setOnConsoleMessage((message) {
             if (mounted) {
               setState(
@@ -1318,7 +1317,6 @@ class _BrowserPageState extends State<BrowserPage> {
   void _replacePrimaryControllerForTesting() {
     final replacement = WebViewController()
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
-      ..setUserAgent('webview_flutter_linux_example/replacement')
       ..addJavaScriptChannel(
         'Probe',
         onMessageReceived: (message) {

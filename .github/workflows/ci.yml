@@ -37,6 +37,7 @@ jobs:
             gst-plugins-base \
             gst-plugins-good \
             gtk3 \
+            jq \
             libepoxy \
             mesa \
             ninja \

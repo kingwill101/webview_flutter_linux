@@ -18,6 +18,15 @@ dev_dependencies:
   flutter_lints: ^6.0.0
   flutter_test:
     sdk: flutter
+  integration_test:
+    sdk: flutter
 
 flutter:
   uses-material-design: true
+  assets:
+    - assets/sample_audio.ogg
+    - assets/test_tls_server_cert.pem
+    - assets/test_tls_server_key.pem
+    - assets/secondary/
+    - assets/secondary/images/
+    - assets/secondary/styles/

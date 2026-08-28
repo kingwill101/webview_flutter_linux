@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Independent WebView</title>
+    <link rel="stylesheet" href="styles/secondary.css">
+  </head>
+  <body>
+    <main>
+      <img src="images/texture.svg" alt="Layered texture icon">
+      <div>
+        <h1>Independent WebView</h1>
+        <p>Packaged HTML, CSS, and image loaded by a second native view.</p>
+        <label>
+          Text input and IME composition
+          <input id="text-input-probe" type="text" placeholder="Type or compose text">
+        </label>
+        <label>
+          Multiline editing
+          <textarea id="textarea-probe" rows="2" placeholder="Selection, emoji, and composed text"></textarea>
+        </label>
+        <label>
+          Choose a text file
+          <input id="file-probe" type="file" accept="text/plain">
+        </label>
+        <a id="download-probe" href="upload.txt" download="download-probe.txt">
+          Download the packaged text file
+        </a>
+        <a id="target-blank-probe" href="popup.html" target="_blank">
+          Open a related WebView with target=_blank
+        </a>
+        <label>
+          Choose a rendering path
+          <select id="option-menu-probe">
+            <option>CPU copy</option>
+            <optgroup label="GPU paths">
+              <option selected>DMA-BUF texture</option>
+              <option>Shared-memory texture</option>
+            </optgroup>
+            <option disabled>GTK widget</option>
+          </select>
+        </label>
+      </div>
+    </main>
+    <script>
+      document.querySelector('h1').textContent =
+        'JavaScript unexpectedly ran';
+    </script>
+  </body>
+</html>

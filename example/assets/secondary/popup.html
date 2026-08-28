@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Target Blank Popup</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: system-ui, sans-serif;
+        background: #1b1731;
+        color: #f0edff;
+      }
+
+      body {
+        min-height: 100vh;
+        margin: 0;
+        display: grid;
+        place-items: center;
+        background: radial-gradient(circle at top, #514496, #1b1731 65%);
+      }
+
+      main {
+        max-width: 32rem;
+        padding: 2rem;
+        text-align: center;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1 id="target-blank-popup-title">Independent target=_blank WebView</h1>
+      <p>The opener is still visible behind this separately rendered texture.</p>
+    </main>
+  </body>
+</html>
